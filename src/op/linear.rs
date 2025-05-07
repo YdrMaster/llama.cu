@@ -1,9 +1,11 @@
 ﻿use super::{Handle, Operator};
 use crate::{macros::*, offset_ptr};
-use cublas::GemmScheme;
 use ggus::ggml_quants::f16;
 use nn::Arg;
-use operators::cuda::{Stream, VirByte};
+use operators::{
+    cublas::GemmScheme,
+    cuda::{Stream, VirByte},
+};
 use std::mem::swap;
 use tensor::{
     Tensor,
@@ -91,7 +93,7 @@ impl Operator for Linear {
                     layout.c_ld,
                 )
             },
-            n => todo!(),
+            _n => todo!(),
         }
     }
 }

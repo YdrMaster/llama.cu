@@ -2,16 +2,16 @@ mod blob;
 mod exec;
 mod fmt;
 mod gguf;
-mod llama;
 mod loader;
 mod macros;
+mod model;
 mod op;
 mod range_collector;
 
 use blob::Blob;
 use exec::{Exec, merge_cuda_graph};
 use gguf::{GGufModel, map_files};
-use ggus::ggml_quants::{digit_layout::types, f16};
+use ggus::ggml_quants::digit_layout::types;
 use loader::WeightLoader;
 use macros::destruct;
 use nn::{Dim, GraphBuilder, Tensor, TensorMeta, op as nn_op};
@@ -22,14 +22,12 @@ use operators::{
 };
 use range_collector::RangeCollector;
 use std::{iter::zip, time::Instant};
-use tensor::digit_layout::DigitLayout;
 
-// cargo run --release -- ../TinyStory-5M-v0.0-F32.gguf
 fn main() {
     let mut times = TimeCollector::default();
     let maps = map_files(std::env::args().nth(1).unwrap());
     let mut gguf = GGufModel::read(maps.iter().map(|x| &**x));
-    let llama = llama::init(&mut gguf);
+    let llama = model::init(&mut gguf);
     times.push("load");
 
     let nn::Graph(graph::Graph { topo, nodes, edges }) = GraphBuilder::default()
@@ -132,8 +130,8 @@ fn main() {
     let exec = graph.into_exec();
     times.push("into exec");
     // 创建 kv cache
-    let kv_cache = llama::kv_cache::<2>(&gguf); // kv cache 的最大容量
-    let each = kv_cache.get() / kv_cache.shape()[0]; // kv cache 每个 token 的尺寸
+    let kv_cache = model::kv_cache::<2>(&gguf); // kv cache 的最大容量
+    let _each = kv_cache.get() / kv_cache.shape()[0]; // kv cache 每个 token 的尺寸
     let kv_cache_vir = reserve_pages(*kv_cache.get(), page_size); // 为 kv cache 分配虚页
     let kv_cache = kv_cache
         .map(|_| kv_cache_vir[0].as_ptr()) // 存入张量
@@ -174,7 +172,9 @@ fn main() {
         let stream = ctx.stream();
         for exec in &exec {
             match exec {
-                Exec::Graph(graph) => graph.launch(&stream),
+                Exec::Graph(graph) => {
+                    stream.launch_graph(graph);
+                }
                 Exec::Attention(box_) => {
                     let exec::Attention { iblk, q, k, v, o } = &**box_;
 
@@ -185,14 +185,14 @@ fn main() {
 
                     attn.launch(
                         &Args {
-                            q_layout: layout(&q),
-                            q_base: offset_ptr(&q).cast_mut().cast(),
-                            k_layout: layout(&k),
-                            k_base: offset_ptr(&k).cast_mut().cast(),
-                            v_layout: layout(&v),
-                            v_base: offset_ptr(&v).cast_mut().cast(),
-                            o_layout: layout(&o),
-                            o_base: offset_ptr(&o).cast_mut().cast(),
+                            q_layout: layout(q),
+                            q_base: offset_ptr(q).cast_mut().cast(),
+                            k_layout: layout(k),
+                            k_base: offset_ptr(k).cast_mut().cast(),
+                            v_layout: layout(v),
+                            v_base: offset_ptr(v).cast_mut().cast(),
+                            o_layout: layout(o),
+                            o_base: offset_ptr(o).cast_mut().cast(),
                             k_cache_layout: layout(&k_cache),
                             k_cache_base: offset_ptr(&k_cache).cast_mut().cast(),
                             v_cache_layout: layout(&v_cache),

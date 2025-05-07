@@ -4,9 +4,11 @@ mod rms_norm;
 mod rope;
 mod swiglu;
 
-use cublas::Cublas;
 use nn::Tensor;
-use operators::cuda::{CurrentCtx, Module, Ptx, Stream, VirByte};
+use operators::{
+    cublas::Cublas,
+    cuda::{CurrentCtx, Module, Ptx, Stream, VirByte},
+};
 use std::collections::HashMap;
 use tensor::digit_layout::{DigitLayout, types};
 

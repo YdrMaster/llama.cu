@@ -1,10 +1,19 @@
-﻿use crate::{blob::Blob, gguf::GGufModel, meta};
+﻿use crate::{
+    blob::{Blob, Data},
+    gguf::GGufModel,
+    meta,
+};
 use ggus::GGufMetaMapExt;
 use nn::Tensor;
 use tensor::digit_layout::types;
 
 pub fn init(gguf: &mut GGufModel) -> nn::LLaMA<String> {
-    insert_sin_cos(gguf);
+    let arch = meta![gguf => general_architecture];
+    let dt_bias = match arch {
+        "llama" => None,
+        "qwen2" => Some(gguf.tensors["blk.0.attn_qkv.bias"].dt()),
+        arch => panic!("unsupported arch {arch}"),
+    };
 
     let nvoc = meta![gguf => tokenizer_ggml_tokens].len();
     let nctx = meta![gguf => llm_context_length];
@@ -17,7 +26,12 @@ pub fn init(gguf: &mut GGufModel) -> nn::LLaMA<String> {
     let epsilon = meta![gguf => llm_attention_layer_norm_rms_epsilon; 1e-5];
     let dt_embd = gguf.tensors["token_embd.weight"].dt();
     let dt_norm = gguf.tensors["output_norm.weight"].dt();
-    let dt_linear = gguf.tensors["output.weight"].dt();
+    let dt_linear = gguf.tensors["blk.0.attn_qkv.weight"].dt();
+    let theta = meta![gguf => llm_rope_freq_base; 1e4];
+
+    let [sin, cos] = build_sin_cos(nctx, dh, theta);
+    gguf.tensors.insert("sin_table", sin);
+    gguf.tensors.insert("cos_table", cos);
 
     ::nn::LLaMA {
         embedding: ::nn::Embedding {
@@ -46,7 +60,7 @@ pub fn init(gguf: &mut GGufModel) -> nn::LLaMA<String> {
                         dt: dt_linear,
                         shape: [((nh + nkvh + nkvh) * dh).into(), d.into()],
                         weight: format!("blk.{iblk}.attn_qkv.weight"),
-                        bias: None,
+                        bias: dt_bias.map(|dt| (dt, format!("blk.{iblk}.attn_qkv.bias"))),
                     },
                     rope: Some(::nn::RoPE {
                         nctx: nctx.into(),
@@ -96,12 +110,18 @@ pub fn init(gguf: &mut GGufModel) -> nn::LLaMA<String> {
         lm_head: ::nn::Linear {
             dt: dt_linear,
             shape: [nvoc.into(), d.into()],
-            weight: "output.weight".into(),
+            weight: if gguf.tensors.contains_key("output.weight") {
+                "output.weight"
+            } else {
+                "token_embd.weight"
+            }
+            .into(),
             bias: None,
         },
     }
 }
 
+/// 构造 kv cache 张量
 pub fn kv_cache<const N: usize>(gguf: &GGufModel) -> Tensor<usize, N> {
     let dt = gguf.tensors["token_embd.weight"].dt();
     let nblk = meta![gguf => llm_block_count];
@@ -110,17 +130,15 @@ pub fn kv_cache<const N: usize>(gguf: &GGufModel) -> Tensor<usize, N> {
     let nh = meta![gguf => llm_attention_head_count];
     let nkvh = meta![gguf => llm_attention_head_count_kv; nh];
     let dh = meta![gguf => llm_rope_dimension_count; d / nh];
-    Tensor::from_dim_slice(dt, &[nctx, nblk, 2, nkvh, dh])
+    Tensor::from_dim_slice(dt, [nctx, nblk, 2, nkvh, dh])
 }
 
-/// 构造 sin cos 表张量，存储到 GGufModel 中
-fn insert_sin_cos(gguf: &mut GGufModel) {
-    let nctx = meta![gguf => llm_context_length];
-    let d = meta![gguf => llm_embedding_length];
-    let nh = meta![gguf => llm_attention_head_count];
-    let dh = meta![gguf => llm_rope_dimension_count; d / nh];
-    let theta = meta![gguf => llm_rope_freq_base; 1e4];
-
+/// 构造 sin cos 表张量
+fn build_sin_cos<'a, const N: usize>(
+    nctx: usize,
+    dh: usize,
+    theta: f32,
+) -> [Tensor<Data<'a>, N>; 2] {
     let ty = types::F32;
     let mut sin = Blob::new(nctx * dh / 2 * ty.nbytes());
     let mut cos = Blob::new(nctx * dh / 2 * ty.nbytes());
@@ -143,19 +161,11 @@ fn insert_sin_cos(gguf: &mut GGufModel) {
         }
     }
 
-    let mut insert = |name, data: Blob| {
-        assert!(
-            gguf.tensors
-                .insert(
-                    name,
-                    Tensor::from_dim_slice(ty, [nctx, dh / 2]).map(|len| {
-                        assert_eq!(len, data.len());
-                        data.into()
-                    })
-                )
-                .is_none()
-        )
+    let tensor = |data: Blob| {
+        Tensor::from_dim_slice(ty, [nctx, dh / 2]).map(|len| {
+            assert_eq!(len, data.len());
+            data.into()
+        })
     };
-    insert("sin_table", sin);
-    insert("cos_table", cos);
+    [tensor(sin), tensor(cos)]
 }
