@@ -77,8 +77,3 @@ fn move_type(unit: usize) -> &'static str {
         _ => todo!(),
     }
 }
-
-#[inline(always)]
-fn offset_ptr<T, const N: usize>(t: &Tensor<*const T, N>) -> *const T {
-    unsafe { t.get().byte_offset(t.layout().offset()) }
-}

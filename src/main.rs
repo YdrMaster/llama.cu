@@ -13,8 +13,13 @@ use exec::{Exec, merge_cuda_graph};
 use gguf::{GGufModel, map_files};
 use ggus::ggml_quants::{digit_layout::types, f16};
 use loader::WeightLoader;
+use macros::destruct;
 use nn::{Dim, GraphBuilder, Tensor, TensorMeta, op as nn_op};
-use operators::cuda::{self, Device, VirByte, VirMem, memcpy_h2d};
+use operators::{
+    Operator, TensorLayout,
+    attention_kv_cached::Args,
+    cuda::{self, Device, Gpu, VirByte, VirMem, memcpy_h2d},
+};
 use range_collector::RangeCollector;
 use std::{iter::zip, time::Instant};
 use tensor::digit_layout::DigitLayout;
@@ -150,12 +155,11 @@ fn main() {
     let out_idx = Blob::from_slice(&[n_tok as u32 - 1]);
     let input_data = [tokens, pos, out_idx];
     let attn_pos = 0;
-    let attn_seq = n_tok;
-    let mask =
-        Tensor::<usize, 2>::from_dim_slice(types::F16, &[1, 1, attn_seq, attn_pos + attn_seq])
-            .map(|_| build_mask(types::F16, attn_pos, attn_seq));
 
-    dev.context().apply(|ctx| {
+    let context = dev.context();
+    let gpu = Gpu::new(context, Default::default());
+    let attn = operators::attention_kv_cached::cuda::Operator::new(&gpu);
+    gpu.apply(|ctx| {
         let (_handle, exec) = merge_cuda_graph(ctx, exec);
         times.push("build cuda graph");
 
@@ -168,46 +172,55 @@ fn main() {
         }
 
         let stream = ctx.stream();
-        let mask = mask.as_ref().map(|blob| stream.from_host(blob));
-        let mask = mask.as_ref().map(|blob| blob.as_ptr().cast::<VirByte>());
-
         for exec in &exec {
             match exec {
-                Exec::Graph(graph) => {
+                Exec::Graph(graph, outputs) => {
                     graph.launch(&stream);
+                    if !outputs.is_empty() {
+                        destruct!([y] = outputs);
+                        fmt::fmt(&y, ctx);
+                        std::process::exit(0)
+                    }
                 }
                 Exec::Attention(box_) => {
                     let exec::Attention { iblk, q, k, v, o } = &**box_;
-                    let q = q
-                        .clone()
-                        .transform(|layout| layout.tile_be(0, &[1, layout.shape()[0]]));
-                    let k = k
-                        .clone()
-                        .transform(|layout| layout.tile_be(0, &[1, layout.shape()[0]]));
-                    let v = v
-                        .clone()
-                        .transform(|layout| layout.tile_be(0, &[1, layout.shape()[0]]));
-                    let o = o
-                        .clone()
-                        .transform(|layout| layout.tile_be(0, &[1, layout.shape()[0]]));
 
-                    // [1, nkvh, 2, nctx, dh]
-                    let kv_cache = kv_cache.clone().transform(|layout| {
-                        layout.index(1, *iblk).tile_be(0, &[1, layout.shape()[0]])
-                    });
-                    let kv_cahce_end = kv_cache
-                        .clone()
-                        .transform(|layout| layout.slice(3, attn_pos, 1, attn_seq));
-                    let k_cache = kv_cache.clone().transform(|layout| layout.index(2, 0));
-                    let v_cache = kv_cache.clone().transform(|layout| layout.index(2, 1));
-                    let k_cache_end = kv_cahce_end.clone().transform(|layout| layout.index(2, 0));
-                    let v_cache_end = kv_cahce_end.clone().transform(|layout| layout.index(2, 1));
+                    // [nkvh, 2, nctx, dh]
+                    let kv_cache = kv_cache.clone().transform(|layout| layout.index(1, *iblk));
+                    let k_cache = kv_cache.clone().transform(|layout| layout.index(1, 0));
+                    let v_cache = kv_cache.clone().transform(|layout| layout.index(1, 1));
+
+                    attn.launch(
+                        &Args {
+                            q_layout: layout(&q),
+                            q_base: offset_ptr(&q).cast_mut().cast(),
+                            k_layout: layout(&k),
+                            k_base: offset_ptr(&k).cast_mut().cast(),
+                            v_layout: layout(&v),
+                            v_base: offset_ptr(&v).cast_mut().cast(),
+                            o_layout: layout(&o),
+                            o_base: offset_ptr(&o).cast_mut().cast(),
+                            k_cache_layout: layout(&k_cache),
+                            k_cache_base: offset_ptr(&k_cache).cast_mut().cast(),
+                            v_cache_layout: layout(&v_cache),
+                            v_cache_base: offset_ptr(&v_cache).cast_mut().cast(),
+                            mask: operators::fuesd_softmax::AttnMask::Causal,
+                            pos: attn_pos,
+                        },
+                        &mut [],
+                        &stream,
+                    )
+                    .unwrap()
                 }
             }
         }
 
+        stream.synchronize();
         times.push("launch");
         println!("{times}");
+
+        destruct!([x] = global_outputs);
+        fmt::fmt(&x, ctx);
     });
 }
 
@@ -258,23 +271,14 @@ fn reserve_pages(size: usize, page_size: usize) -> Box<[VirMem]> {
     ans.into()
 }
 
-fn build_mask(dt: DigitLayout, pos: usize, seq: usize) -> Blob {
-    let mut ans = Blob::new(dt.nbytes() * seq * (pos + seq));
-    match dt {
-        types::F16 => {
-            let ([], slice, []) = (unsafe { ans.align_to_mut::<f16>() }) else {
-                unreachable!()
-            };
-            fill_mask(slice, pos, seq, f16::ZERO, -f16::INFINITY)
-        }
-        _ => todo!(),
+fn layout<T, const N: usize>(t: &Tensor<*const T, N>) -> TensorLayout {
+    TensorLayout {
+        dt: t.dt(),
+        layout: t.layout().to_inline_size(),
     }
-    ans
 }
 
-fn fill_mask<T: Copy>(slice: &mut [T], pos: usize, seq: usize, zero: T, neg_inf: T) {
-    slice.fill(zero);
-    for r in 0..seq - 1 {
-        slice[r * (pos + seq)..][..pos + seq][pos + r + 1..].fill(neg_inf)
-    }
+#[inline(always)]
+fn offset_ptr<T, const N: usize>(t: &Tensor<*const T, N>) -> *const T {
+    unsafe { t.get().byte_offset(t.layout().offset()) }
 }

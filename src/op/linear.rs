@@ -1,5 +1,5 @@
-﻿use super::{Handle, Operator, offset_ptr};
-use crate::macros::*;
+﻿use super::{Handle, Operator};
+use crate::{macros::*, offset_ptr};
 use cublas::GemmScheme;
 use ggus::ggml_quants::f16;
 use nn::Arg;
