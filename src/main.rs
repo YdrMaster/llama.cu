@@ -1,12 +1,12 @@
 mod blob;
 mod exec;
-mod fmt;
 mod gguf;
 mod loader;
 mod macros;
 mod model;
 mod op;
 mod range_collector;
+mod utils;
 
 use blob::Blob;
 use exec::{Exec, merge_cuda_graph};
@@ -21,14 +21,15 @@ use operators::{
     cuda::{self, Device, Gpu, VirByte, VirMem, memcpy_h2d},
 };
 use range_collector::RangeCollector;
-use std::{iter::zip, time::Instant};
+use std::iter::zip;
 
 fn main() {
-    let mut times = TimeCollector::default();
+    let mut timer = utils::Timer::new();
+
     let maps = map_files(std::env::args().nth(1).unwrap());
     let mut gguf = GGufModel::read(maps.iter().map(|x| &**x));
     let llama = model::init(&mut gguf);
-    times.push("load");
+    timer.push("load");
 
     let nn::Graph(graph::Graph { topo, nodes, edges }) = GraphBuilder::default()
         .register_op("embedding", nn_op::embedding::Embedding)
@@ -50,7 +51,7 @@ fn main() {
             ],
         )
         .unwrap();
-    times.push("build");
+    timer.push("build");
 
     // for cuda
     let mut ranges = RangeCollector::new(512);
@@ -71,8 +72,9 @@ fn main() {
 
     assert!(cuda::init().is_ok());
     let dev = Device::new(0);
-    let page_size = dev.mem_prop().granularity_minimum();
-    let mut mapped = VirMem::new(ranges.size().div_ceil(page_size) * page_size, 0).map_on(&dev);
+    let mut pages = utils::MemPages::new(&dev);
+    let page_size = pages.page_size();
+    let mut weight = VirMem::new(ranges.size().div_ceil(page_size) * page_size, 0).map_on(&dev);
     let edges = dev.context().apply(|ctx| {
         let mut loader = WeightLoader::new(
             ranges
@@ -90,7 +92,7 @@ fn main() {
                     name,
                     item: item.map(|data| {
                         let range = ranges.get(data.as_ptr()).unwrap().clone();
-                        let dst = &mut mapped[range];
+                        let dst = &mut weight[range];
                         loader.load(dst, data, &stream);
                         dst.as_ptr().cast::<VirByte>()
                     }),
@@ -98,68 +100,66 @@ fn main() {
             })
             .collect::<Box<_>>()
     });
-    let (weight_vir, weight_phy) = mapped.unmap();
-    times.push("cuda");
+    timer.push("cuda");
 
-    let tokens = [9038u32, 2501, 263, 931, 29892];
-    let n_tok = tokens.len();
-    let graph = nn::Graph(graph::Graph { topo, nodes, edges }).lower(&[("n", n_tok)].into(), |t| t);
-    times.push("fix shape");
-
-    let mem_range_map = graph.mem_range_map(8 << 30, 512);
-
-    let workspace_vir = reserve_pages(mem_range_map.range.len(), page_size);
-    let ptr = workspace_vir[0].as_ptr();
-    let graph = graph.lower(
-        |key| unsafe { ptr.byte_add(mem_range_map.map[&key].start) },
-        |&data| data,
-    );
-    let global_inputs = graph
-        .0
-        .topo
-        .global_inputs()
-        .map(|i| graph.0.edges[i].clone())
-        .collect::<Box<_>>();
-    let global_outputs = graph
-        .0
-        .topo
-        .global_outputs()
-        .iter()
-        .map(|&i| graph.0.edges[i].clone())
-        .collect::<Box<_>>();
-    let exec = graph.into_exec();
-    times.push("into exec");
-    // 创建 kv cache
-    let kv_cache = model::kv_cache::<2>(&gguf); // kv cache 的最大容量
-    let _each = kv_cache.get() / kv_cache.shape()[0]; // kv cache 每个 token 的尺寸
-    let kv_cache_vir = reserve_pages(*kv_cache.get(), page_size); // 为 kv cache 分配虚页
-    let kv_cache = kv_cache
-        .map(|_| kv_cache_vir[0].as_ptr()) // 存入张量
-        .transform(|layout| layout.transpose(&[3, 1, 2, 0])); // 转置 [nkvh, nblk, 2, nctx, dh]
-
-    // memcpy node 要求当时虚地址有对应的物理页
-    let _weight = weight_vir.map(weight_phy);
-    let _workspace = workspace_vir
-        .into_iter()
-        .map(|vir| vir.map_on(&dev))
-        .collect::<Box<_>>();
-    let _kv_cache = kv_cache_vir
-        .into_iter()
-        .map(|vir| vir.map_on(&dev))
-        .collect::<Box<_>>();
-
-    let tokens = Blob::from_slice(&tokens);
-    let pos = Blob::from_slice(&(0..n_tok as u32).collect::<Vec<_>>());
-    let out_idx = Blob::from_slice(&[n_tok as u32 - 1]);
-    let input_data = [tokens, pos, out_idx];
-    let attn_pos = 0;
-
-    let context = dev.context();
-    let gpu = Gpu::new(context, Default::default());
+    let gpu = Gpu::new(dev.context(), Default::default());
     let attn = operators::attention_kv_cached::cuda::Operator::new(&gpu);
     gpu.apply(|ctx| {
+        let tokens = [9038u32, 2501, 263, 931, 29892];
+        let n_tok = tokens.len();
+        let graph =
+            nn::Graph(graph::Graph { topo, nodes, edges }).lower(&[("n", n_tok)].into(), |t| t);
+        timer.push("fix shape");
+
+        let mem_range_map = graph.mem_range_map(8 << 30, 512);
+
+        let workspace_vir = pages.reserve_vir(mem_range_map.range.len());
+        let ptr = workspace_vir[0].as_ptr();
+        let graph = graph.lower(
+            |key| unsafe { ptr.byte_add(mem_range_map.map[&key].start) },
+            |&data| data,
+        );
+        let global_inputs = graph
+            .0
+            .topo
+            .global_inputs()
+            .map(|i| graph.0.edges[i].clone())
+            .collect::<Box<_>>();
+        let global_outputs = graph
+            .0
+            .topo
+            .global_outputs()
+            .iter()
+            .map(|&i| graph.0.edges[i].clone())
+            .collect::<Box<_>>();
+        let exec = graph.into_exec();
+        timer.push("into exec");
+        // 创建 kv cache
+        let kv_cache = model::kv_cache::<2>(&gguf); // kv cache 的最大容量
+        let _each = kv_cache.get() / kv_cache.shape()[0]; // kv cache 每个 token 的尺寸
+        let kv_cache_vir = pages.reserve_vir(*kv_cache.get()); // 为 kv cache 分配虚页
+        let kv_cache = kv_cache
+            .map(|_| kv_cache_vir[0].as_ptr()) // 存入张量
+            .transform(|layout| layout.transpose(&[3, 1, 2, 0])); // 转置 [nkvh, nblk, 2, nctx, dh]
+
+        // memcpy node 要求当时虚地址有对应的物理页
+        let _workspace = workspace_vir
+            .into_iter()
+            .map(|vir| vir.map(pages.take()))
+            .collect::<Box<_>>();
+        let _kv_cache = kv_cache_vir
+            .into_iter()
+            .map(|vir| vir.map(pages.take()))
+            .collect::<Box<_>>();
+
         let (_handle, exec) = merge_cuda_graph(ctx, exec);
-        times.push("build cuda graph");
+        timer.push("build cuda graph");
+
+        let tokens = Blob::from_slice(&tokens);
+        let pos = Blob::from_slice(&(0..n_tok as u32).collect::<Vec<_>>());
+        let out_idx = Blob::from_slice(&[n_tok as u32 - 1]);
+        let input_data = [tokens, pos, out_idx];
+        let attn_pos = 0;
 
         for (input, data) in zip(&global_inputs, input_data.clone()) {
             let ptr = input.get().cast_mut();
@@ -209,59 +209,12 @@ fn main() {
         }
 
         stream.synchronize();
-        times.push("launch");
-        println!("{times}");
+        timer.push("launch");
+        println!("{timer}");
 
         destruct!([x] = global_outputs);
-        fmt::fmt(&x, ctx);
+        utils::fmt(&x, ctx);
     });
-}
-
-#[derive(Default)]
-#[repr(transparent)]
-struct TimeCollector(Vec<(String, Instant)>);
-
-impl TimeCollector {
-    pub fn push(&mut self, name: impl std::fmt::Display) {
-        self.0.push((name.to_string(), Instant::now()))
-    }
-}
-
-impl std::fmt::Display for TimeCollector {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let name_width = self.0.iter().map(|(name, _)| name.len()).max().unwrap_or(0) + 2;
-        for i in 1..self.0.len() {
-            writeln!(
-                f,
-                "{:·<name_width$}{:?}",
-                self.0[i].0,
-                self.0[i].1 - self.0[i - 1].1
-            )?
-        }
-        Ok(())
-    }
-}
-
-fn reserve_pages(size: usize, page_size: usize) -> Box<[VirMem]> {
-    let n_pages = size.div_ceil(page_size);
-    if n_pages == 0 {
-        return Box::new([]);
-    }
-
-    let mut ans = Vec::with_capacity(n_pages);
-    let first = VirMem::new(page_size, 0);
-    let mut end = first.as_ptr_range().end;
-    ans.push(first);
-    while ans.len() < n_pages {
-        let next = VirMem::new(page_size, end as _);
-        let ptr = next.as_ptr();
-        if ptr != end {
-            ans.clear()
-        }
-        end = next.as_ptr_range().end;
-        ans.push(next)
-    }
-    ans.into()
 }
 
 fn layout<T, const N: usize>(t: &Tensor<*const T, N>) -> TensorLayout {

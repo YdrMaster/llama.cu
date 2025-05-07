@@ -1,0 +1,164 @@
+﻿use crate::blob::Blob;
+use ggus::ggml_quants::f16;
+use nn::Tensor;
+use operators::cuda::{CurrentCtx, DevByte, Device, MemProp, PhyMem, VirByte, VirMem, memcpy_d2h};
+use std::{fmt, sync::Arc, time::Instant};
+use tensor::digit_layout::types;
+
+pub(super) fn fmt<const N: usize>(tensor: &Tensor<*const VirByte, N>, _ctx: &CurrentCtx) {
+    let mem_range = tensor.layout().data_range();
+    let ptr = tensor.get().cast::<DevByte>();
+    let len = *mem_range.end() as usize + tensor.dt().nbytes();
+    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let mut host = Blob::new(len);
+    memcpy_d2h(&mut host, slice);
+    println!("{}", Fmt(tensor.as_ref().map(|_| host).as_deref()))
+}
+
+pub struct Fmt<'a, const N: usize>(Tensor<&'a [u8], N>);
+
+impl<const N: usize> fmt::Display for Fmt<'_, N> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let layout = self.0.layout();
+        let ptr = self.0.get().as_ptr();
+        macro_rules! display {
+            ($ty:ty) => {
+                unsafe { layout.write_array(f, ptr.cast::<DataFmt<$ty>>()) }
+            };
+        }
+        match self.0.dt() {
+            types::F16 => display!(f16),
+            types::F32 => display!(f32),
+            types::U32 => display!(u32),
+            types::U64 => display!(u64),
+            _ => todo!(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+struct DataFmt<T>(T);
+
+impl fmt::Display for DataFmt<f16> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.0 == f16::ZERO {
+            write!(f, " ________")
+        } else {
+            write!(f, "{:>9.3e}", self.0.to_f32())
+        }
+    }
+}
+
+impl fmt::Display for DataFmt<f32> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.0 == 0. {
+            write!(f, " ________")
+        } else {
+            write!(f, "{:>9.3e}", self.0)
+        }
+    }
+}
+
+impl fmt::Display for DataFmt<u32> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.0 == 0 {
+            write!(f, " ________")
+        } else {
+            write!(f, "{:>6}", self.0)
+        }
+    }
+}
+
+impl fmt::Display for DataFmt<u64> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.0 == 0 {
+            write!(f, " ________")
+        } else {
+            write!(f, "{:>6}", self.0)
+        }
+    }
+}
+
+#[repr(transparent)]
+pub(super) struct Timer(Vec<(String, Instant)>);
+
+impl Timer {
+    pub fn new() -> Self {
+        Self(vec![(String::new(), Instant::now())])
+    }
+
+    pub fn push(&mut self, name: impl std::fmt::Display) {
+        self.0.push((name.to_string(), Instant::now()))
+    }
+    #[allow(unused)]
+    pub fn clear(&mut self) {
+        self.0.clear()
+    }
+}
+
+impl std::fmt::Display for Timer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name_width = self.0.iter().map(|(name, _)| name.len()).max().unwrap_or(0) + 2;
+        for i in 1..self.0.len() {
+            writeln!(
+                f,
+                "{:·<name_width$}{:?}",
+                self.0[i].0,
+                self.0[i].1 - self.0[i - 1].1
+            )?
+        }
+        Ok(())
+    }
+}
+
+pub(super) struct MemPages {
+    prop: MemProp,
+    size: usize,
+    pool: Vec<Arc<PhyMem>>,
+}
+
+impl MemPages {
+    pub fn new(dev: &Device) -> Self {
+        let prop = dev.mem_prop();
+        let size = prop.granularity_minimum();
+        let pool = Vec::new();
+        Self { prop, size, pool }
+    }
+
+    pub const fn page_size(&self) -> usize {
+        self.size
+    }
+
+    pub fn reserve_vir(&self, size: usize) -> Box<[VirMem]> {
+        let n_pages = size.div_ceil(self.size);
+        if n_pages == 0 {
+            return Box::new([]);
+        }
+
+        let mut ans = Vec::with_capacity(n_pages);
+        let first = VirMem::new(self.size, 0);
+        let mut end = first.as_ptr_range().end;
+        ans.push(first);
+        while ans.len() < n_pages {
+            let next = VirMem::new(self.size, end as _);
+            let ptr = next.as_ptr();
+            if ptr != end {
+                ans.clear()
+            }
+            end = next.as_ptr_range().end;
+            ans.push(next)
+        }
+        ans.into()
+    }
+
+    pub fn put(&mut self, page: Arc<PhyMem>) {
+        self.pool.push(page)
+    }
+
+    pub fn take(&mut self) -> Arc<PhyMem> {
+        self.pool
+            .pop()
+            .unwrap_or_else(|| self.prop.create(self.size))
+    }
+}
