@@ -8,7 +8,7 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 pub(crate) enum Exec<'ctx> {
-    Graph(GraphExec<'ctx>, Box<[Tensor<*const VirByte, 2>]>),
+    Graph(GraphExec<'ctx>),
     Attention(Box<Attention>),
 }
 
@@ -50,20 +50,14 @@ pub fn merge_cuda_graph(
             "rms-norm" => add_to_graph!(RmsNorm),
             "linear" => add_to_graph!(Linear),
             "rope" => add_to_graph!(Rope),
-            "swiglu" => {
-                let outputs_ = outputs.clone();
-                add_to_graph!(Swiglu);
-                if let Some(stream) = stream.take() {
-                    exec_.push(Exec::Graph(ctx.instantiate(&stream.end()), outputs_))
-                }
-            }
+            "swiglu" => add_to_graph!(Swiglu),
             "empty" => {}
             "attention" => {
                 static REGEX: LazyLock<Regex> =
                     LazyLock::new(|| Regex::new(r"^Ω\.blk(\d+)\.attn:attention$").unwrap());
 
                 if let Some(stream) = stream.take() {
-                    exec_.push(Exec::Graph(ctx.instantiate(&stream.end()), Box::new([])))
+                    exec_.push(Exec::Graph(ctx.instantiate(&stream.end())))
                 }
 
                 destruct!([q, k, v] = inputs);
@@ -107,7 +101,7 @@ pub fn merge_cuda_graph(
         }
     }
     if let Some(stream) = stream.take() {
-        exec_.push(Exec::Graph(ctx.instantiate(&stream.end()), Box::new([])))
+        exec_.push(Exec::Graph(ctx.instantiate(&stream.end())))
     }
     (handle, exec_.into())
 }

@@ -174,14 +174,7 @@ fn main() {
         let stream = ctx.stream();
         for exec in &exec {
             match exec {
-                Exec::Graph(graph, outputs) => {
-                    graph.launch(&stream);
-                    if !outputs.is_empty() {
-                        destruct!([y] = outputs);
-                        fmt::fmt(&y, ctx);
-                        std::process::exit(0)
-                    }
-                }
+                Exec::Graph(graph) => graph.launch(&stream),
                 Exec::Attention(box_) => {
                     let exec::Attention { iblk, q, k, v, o } = &**box_;
 

@@ -78,7 +78,7 @@ impl Operator for Swiglu {
         // 启动内核
         stream.launch(
             &kernel,
-            (n as c_uint, (d / block) as c_uint, block),
+            ((n as c_uint, (d / block) as c_uint), block as c_uint, 0),
             &params.to_ptrs(),
         );
     }

@@ -20,7 +20,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 [[package]]
 name = "arg"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=d2b895f#d2b895fe4f1d6b0434839c1e6e50c7ec20728275"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=672d6c4#672d6c42b03081ed019a7f64fe02b0544e21c95e"
 
 [[package]]
 name = "autocfg"
@@ -262,7 +262,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 [[package]]
 name = "exec"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=d2b895f#d2b895fe4f1d6b0434839c1e6e50c7ec20728275"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=672d6c4#672d6c42b03081ed019a7f64fe02b0544e21c95e"
 dependencies = [
  "arg",
  "graph",
@@ -444,7 +444,7 @@ checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
 [[package]]
 name = "graph"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=d2b895f#d2b895fe4f1d6b0434839c1e6e50c7ec20728275"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=672d6c4#672d6c42b03081ed019a7f64fe02b0544e21c95e"
 dependencies = [
  "bit-set",
 ]
@@ -593,7 +593,7 @@ dependencies = [
 [[package]]
 name = "mem"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=d2b895f#d2b895fe4f1d6b0434839c1e6e50c7ec20728275"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=672d6c4#672d6c42b03081ed019a7f64fe02b0544e21c95e"
 dependencies = [
  "arg",
  "exec",
@@ -643,7 +643,7 @@ checksum = "86a1db1a5ed8293057d401ebd96872cb881a3693d9b55379ae320f652aea3714"
 [[package]]
 name = "nn"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=d2b895f#d2b895fe4f1d6b0434839c1e6e50c7ec20728275"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=672d6c4#672d6c42b03081ed019a7f64fe02b0544e21c95e"
 dependencies = [
  "arg",
  "digit-layout 0.3.0",
@@ -712,6 +712,7 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 [[package]]
 name = "operators"
 version = "0.0.0"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=30a518f#30a518ff49389e15637c7f9a00155fc0a07bce18"
 dependencies = [
  "build-script-cfg 0.0.0",
  "clrt",

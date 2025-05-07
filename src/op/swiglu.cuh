@@ -10,10 +10,11 @@ static __device__ void swiglu(
     int const stride_gate,
     Tdata const *__restrict__ up_,
     int const stride_up) {
-    auto k = blockIdx.x * blockDim.x + threadIdx.x,
-         i = blockIdx.y * stride_gate + k,
-         j = blockIdx.y * stride_up + k;
-    auto x = float(gate_[i]),
-         y = float(up_[j]);
-    out[i] = Tdata(x * sigmoid(x) * y);
+    auto n = blockIdx.x * blockDim.x + threadIdx.x,
+         i = blockIdx.y * stride_out + n,
+         j = blockIdx.y * stride_gate + n,
+         k = blockIdx.y * stride_up + n;
+    float gate = gate_[j],
+          up = up_[k];
+    out[i] = Tdata(gate * sigmoid(gate) * up);
 }
