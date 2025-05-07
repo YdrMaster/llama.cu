@@ -1,8 +1,8 @@
 ﻿use crate::blob::Blob;
 use ggus::ggml_quants::f16;
 use nn::Tensor;
-use operators::cuda::{CurrentCtx, DevByte, Device, MemProp, PhyMem, VirByte, VirMem, memcpy_d2h};
-use std::{fmt, sync::Arc, time::Instant};
+use operators::cuda::{CurrentCtx, DevByte, VirByte, memcpy_d2h};
+use std::{fmt, time::Instant};
 use tensor::digit_layout::types;
 
 pub(super) fn fmt<const N: usize>(tensor: &Tensor<*const VirByte, N>, _ctx: &CurrentCtx) {
@@ -109,56 +109,5 @@ impl std::fmt::Display for Timer {
             )?
         }
         Ok(())
-    }
-}
-
-pub(super) struct MemPages {
-    prop: MemProp,
-    size: usize,
-    pool: Vec<Arc<PhyMem>>,
-}
-
-impl MemPages {
-    pub fn new(dev: &Device) -> Self {
-        let prop = dev.mem_prop();
-        let size = prop.granularity_minimum();
-        let pool = Vec::new();
-        Self { prop, size, pool }
-    }
-
-    pub const fn page_size(&self) -> usize {
-        self.size
-    }
-
-    pub fn reserve_vir(&self, size: usize) -> Box<[VirMem]> {
-        let n_pages = size.div_ceil(self.size);
-        if n_pages == 0 {
-            return Box::new([]);
-        }
-
-        let mut ans = Vec::with_capacity(n_pages);
-        let first = VirMem::new(self.size, 0);
-        let mut end = first.as_ptr_range().end;
-        ans.push(first);
-        while ans.len() < n_pages {
-            let next = VirMem::new(self.size, end as _);
-            let ptr = next.as_ptr();
-            if ptr != end {
-                ans.clear()
-            }
-            end = next.as_ptr_range().end;
-            ans.push(next)
-        }
-        ans.into()
-    }
-
-    pub fn put(&mut self, page: Arc<PhyMem>) {
-        self.pool.push(page)
-    }
-
-    pub fn take(&mut self) -> Arc<PhyMem> {
-        self.pool
-            .pop()
-            .unwrap_or_else(|| self.prop.create(self.size))
     }
 }

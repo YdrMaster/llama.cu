@@ -4,12 +4,9 @@ mod rms_norm;
 mod rope;
 mod swiglu;
 
+use crate::handle::Handle;
 use nn::Tensor;
-use operators::{
-    cublas::Cublas,
-    cuda::{CurrentCtx, Module, Ptx, Stream, VirByte},
-};
-use std::collections::HashMap;
+use operators::cuda::{Stream, VirByte};
 use tensor::digit_layout::{DigitLayout, types};
 
 pub use embedding::Embedding;
@@ -26,30 +23,6 @@ pub trait Operator {
         outputs: impl IntoIterator<Item = Tensor<*const VirByte, N>>,
         stream: &Stream,
     );
-}
-
-pub struct Handle<'ctx> {
-    ctx: &'ctx CurrentCtx,
-    cublas: Cublas<'ctx>,
-    modules: HashMap<Box<[ModuleKey]>, Module<'ctx>>,
-}
-
-impl<'ctx> Handle<'ctx> {
-    pub fn new(ctx: &'ctx CurrentCtx) -> Self {
-        Self {
-            ctx,
-            cublas: Cublas::new(ctx),
-            modules: HashMap::new(),
-        }
-    }
-
-    pub fn compile(&mut self, key: Box<[ModuleKey]>, code: impl FnOnce() -> String) -> &Module {
-        self.modules.entry(key).or_insert_with(|| {
-            let (ptx, log) = Ptx::compile(code(), self.ctx.dev().compute_capability());
-            let Ok(ptx) = ptx else { panic!("{log}") };
-            self.ctx.load(&ptx)
-        })
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
