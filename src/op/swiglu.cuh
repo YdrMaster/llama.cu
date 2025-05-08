@@ -3,7 +3,7 @@ static __forceinline__ __device__ float sigmoid(float x) {
 }
 
 template <class Tdata>
-static __device__ void swiglu(
+static __device__ void kernel(
     Tdata *__restrict__ out,
     int const stride_out,
     Tdata const *__restrict__ gate_,

@@ -1,7 +1,7 @@
-use super::{Handle, ModuleKey, Operator, cuda_type};
+use super::{Handle, ModuleKey, Operator, cuda_type, gcd};
 use crate::{macros::*, offset_ptr};
 use operators::cuda::{Stream, VirByte, params};
-use std::ffi::c_uint;
+use std::ffi::{c_int, c_uint};
 use tensor::{Tensor, digit_layout::DigitLayout};
 
 pub struct Swiglu;
@@ -14,9 +14,7 @@ impl Operator for Swiglu {
         outputs: impl IntoIterator<Item = Tensor<*const VirByte, N>>,
         stream: &Stream,
     ) {
-        if arg.is_some() {
-            panic!("Swiglu不需要额外参数");
-        }
+        assert!(arg.is_none());
 
         destruct!([gate, up] = inputs);
         destruct!([out] = outputs);
@@ -47,29 +45,22 @@ impl Operator for Swiglu {
         assert_eq!(s_d_up, unit);
         assert_eq!(s_d_out, unit);
 
-        let stride_token_gate = (s_n_gate / unit) as i32;
-        let stride_token_up = (s_n_up / unit) as i32;
-        let stride_token_out = (s_n_out / unit) as i32;
-
-        // 获取代码
-        let code = code(dt);
-
         // 获取最大线程数
         let max_threads_block = handle.ctx.dev().block_limit().max_threads;
 
         // 编译内核
         let key = [ModuleKey::Text("swiglu"), ModuleKey::Type(dt)].into_iter();
-        let module = handle.compile(key.collect(), || code);
+        let module = handle.compile(key.collect(), || code(dt));
         let kernel = module.get_kernel(c"swiglu");
 
         // 准备参数
         let params = params![
             offset_ptr(&out),
-            stride_token_out,
+            (s_n_out / unit) as c_int,
             offset_ptr(&gate),
-            stride_token_gate,
+            (s_n_gate / unit) as c_int,
             offset_ptr(&up),
-            stride_token_up
+            (s_n_up / unit) as c_int
         ];
 
         // 计算线程块配置
@@ -82,16 +73,6 @@ impl Operator for Swiglu {
             &params.to_ptrs(),
         );
     }
-}
-
-// 计算最大公约数，用于确定最佳的块大小
-fn gcd(mut a: usize, mut b: usize) -> usize {
-    while b != 0 {
-        let rem = a % b;
-        a = b;
-        b = rem;
-    }
-    a
 }
 
 fn code(dt: DigitLayout) -> String {
@@ -109,7 +90,7 @@ extern "C" __global__ void swiglu(
     {dt} const *__restrict__ up,
     int const stride_up
 ){{
-    swiglu<{dt}>(out, stride_out, gate, stride_gate, up, stride_up);
+    kernel(out, stride_out, gate, stride_gate, up, stride_up);
 }}"#
     )
 }

@@ -5,6 +5,10 @@
 };
 use ggus::GGufMetaMapExt;
 use nn::Tensor;
+use operators::{
+    cuda::{DevMem, Stream},
+    random_sample::{Indices, RandomSample},
+};
 use tensor::digit_layout::types;
 
 pub fn init(gguf: &mut GGufModel) -> nn::LLaMA<String> {
@@ -131,6 +135,17 @@ pub fn kv_cache<const N: usize>(gguf: &GGufModel) -> Tensor<usize, N> {
     let nkvh = meta![gguf => llm_attention_head_count_kv; nh];
     let dh = meta![gguf => llm_rope_dimension_count; d / nh];
     Tensor::from_dim_slice(dt, [nctx, nblk, 2, nkvh, dh])
+}
+
+/// 构造 kv cache 张量
+pub fn sample_indices<'ctx, const N: usize>(
+    gguf: &GGufModel,
+    stream: &Stream<'ctx>,
+) -> Tensor<DevMem<'ctx>, N> {
+    type Op = operators::random_sample::cuda::Operator;
+    let nvoc = meta![gguf => tokenizer_ggml_tokens].len();
+    let Indices { n, mem } = Op::build_indices(nvoc, stream);
+    Tensor::from_dim_slice(types::U32, &[n]).map(|_| mem)
 }
 
 /// 构造 sin cos 表张量

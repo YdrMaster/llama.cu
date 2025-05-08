@@ -1,4 +1,5 @@
-﻿mod embedding;
+﻿mod add;
+mod embedding;
 mod linear;
 mod rms_norm;
 mod rope;
@@ -51,4 +52,14 @@ fn move_type(unit: usize) -> &'static str {
         32 => "double4",
         _ => todo!(),
     }
+}
+
+// 最大公约数
+fn gcd(mut a: usize, mut b: usize) -> usize {
+    while b != 0 {
+        let rem = a % b;
+        a = b;
+        b = rem;
+    }
+    a
 }

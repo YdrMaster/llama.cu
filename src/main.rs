@@ -11,19 +11,22 @@ mod utils;
 
 use blob::Blob;
 use gguf::{GGufModel, map_files};
-use ggus::ggml_quants::digit_layout::types;
+use ggus::ggml_quants::{digit_layout::types, f16};
 use handle::{Attention, Exec, Handle};
 use loader::WeightLoader;
 use macros::destruct;
 use memory::{AddrRegion, MemPages};
+use model::sample_indices;
 use nn::{Dim, GraphBuilder, Tensor, TensorMeta, op as nn_op};
 use operators::{
     Operator, TensorLayout,
-    attention_kv_cached::Args,
-    cuda::{self, Device, Gpu, VirByte, VirMem, memcpy_h2d},
+    attention_kv_cached::{Args as AttnArgs, cuda::Operator as Attn},
+    cuda::{self, DevMem, Device, Gpu, HostMem, Stream, VirByte, VirMem, memcpy_h2d},
+    random_sample::{Args as SampleArgs, KVPair, cuda::Operator as Sample},
 };
 use range_collector::RangeCollector;
 use std::iter::zip;
+use tensor::ndarray_layout::ArrayLayout;
 
 fn main() {
     let mut timer = utils::Timer::new();
@@ -47,9 +50,9 @@ fn main() {
         .build(
             llama,
             [
-                TensorMeta::new(types::U32, [Dim::var("n")]),
-                TensorMeta::new(types::U32, [Dim::var("n")]),
-                TensorMeta::new(types::U32, [1.into()]),
+                TensorMeta::new(types::U32, [Dim::var("n_tok")]),
+                TensorMeta::new(types::U32, [Dim::var("n_tok")]),
+                TensorMeta::new(types::U32, [Dim::var("n_out")]),
             ],
         )
         .unwrap();
@@ -115,87 +118,63 @@ fn main() {
 
     let graph = nn::Graph(graph::Graph { topo, nodes, edges });
     let gpu = Gpu::new(dev.context(), Default::default());
-    let attn = operators::attention_kv_cached::cuda::Operator::new(&gpu);
+    let attn = Attn::new(&gpu);
+    let sample = Sample::new(&gpu);
     gpu.apply(|ctx| {
+        let stream = ctx.stream();
+        let mut output_head = OutputHead {
+            sample,
+            indices: sample_indices::<2>(&gguf, &stream),
+            kv_pair: ctx.malloc::<u8>(size_of::<KVPair<()>>()),
+            kv_pair_host: ctx.malloc_host::<u8>(size_of::<KVPair<()>>()),
+        };
+
         let mut handle = Handle::new(ctx);
-        let tokens = [9038u32, 2501, 263, 931, 29892];
         timer.push("prepare");
 
-        let mut model = ModelExec::new(&mut handle, graph, tokens.len(), &mut pages);
-        timer.push(format!("build model n_tok = {}", tokens.len()));
+        let mut models = (0..=6)
+            .map(|i| {
+                let ans = ModelExec::new(&mut handle, graph.clone(), 1 << i, 1, &mut pages);
+                timer.push(format!("build model n_tok = {}", 1 << i));
+                ans
+            })
+            .collect::<Box<_>>();
 
-        pages.map(&mut model.workspace);
-        timer.push("map workspace");
-
-        let n_tok = tokens.len();
-        let tokens = Blob::from_slice(&tokens);
-        let pos = Blob::from_slice(&(0..n_tok as u32).collect::<Vec<_>>());
-        let out_idx = Blob::from_slice(&[n_tok as u32 - 1]);
-        let input_data = [tokens, pos, out_idx];
-        let attn_pos = 0;
-
-        for (input, data) in zip(&model.inputs, input_data.clone()) {
-            let ptr = input.get().cast_mut();
-            memcpy_h2d(
-                unsafe { std::slice::from_raw_parts_mut(ptr.cast(), data.len()) },
-                &data,
-            )
-        }
-        timer.push("copy input");
-
-        let stream = ctx.stream();
-        for exec in &model.execs {
-            match exec {
-                Exec::Graph(graph) => {
-                    stream.launch_graph(graph);
-                }
-                Exec::Attention(box_) => {
-                    let Attention { iblk, q, k, v, o } = &**box_;
-
-                    // [nkvh, 2, nctx, dh]
-                    let kv_cache = kv_cache.clone().transform(|layout| layout.index(1, *iblk));
-                    let k_cache = kv_cache.clone().transform(|layout| layout.index(1, 0));
-                    let v_cache = kv_cache.clone().transform(|layout| layout.index(1, 1));
-
-                    attn.launch(
-                        &Args {
-                            q_layout: layout(q),
-                            q_base: offset_ptr(q).cast_mut().cast(),
-                            k_layout: layout(k),
-                            k_base: offset_ptr(k).cast_mut().cast(),
-                            v_layout: layout(v),
-                            v_base: offset_ptr(v).cast_mut().cast(),
-                            o_layout: layout(o),
-                            o_base: offset_ptr(o).cast_mut().cast(),
-                            k_cache_layout: layout(&k_cache),
-                            k_cache_base: offset_ptr(&k_cache).cast_mut().cast(),
-                            v_cache_layout: layout(&v_cache),
-                            v_cache_base: offset_ptr(&v_cache).cast_mut().cast(),
-                            mask: operators::fuesd_softmax::AttnMask::Causal,
-                            pos: attn_pos,
-                        },
-                        &mut [],
-                        &stream,
-                    )
-                    .unwrap()
-                }
-            }
-        }
-
-        stream.synchronize();
-        timer.push("exec");
         println!("{timer}");
 
-        destruct!([x] = model.outputs);
-        utils::fmt(&x, ctx);
+        let mut tokens = vec![9646, 5193, 264, 882, 11];
+        let mut pos = 0;
+        loop {
+            let model_idx = tokens.len().next_power_of_two().trailing_zeros() as usize;
+            let next = models[model_idx].launch(
+                &tokens,
+                pos,
+                &kv_cache,
+                &mut pages,
+                &attn,
+                &mut output_head,
+                &stream,
+            );
+            println!("next = {next}");
+            pos += tokens.len();
+            tokens = vec![next];
+        }
     });
 }
 
 struct ModelExec<'ctx> {
+    n_tok: usize,
     execs: Box<[Exec<'ctx>]>,
     workspace: AddrRegion,
     inputs: Box<[Tensor<*const VirByte, 2>]>,
     outputs: Box<[Tensor<*const VirByte, 2>]>,
+}
+
+struct OutputHead<'ctx> {
+    sample: Sample,
+    indices: Tensor<DevMem<'ctx>, 2>,
+    kv_pair: DevMem<'ctx>,
+    kv_pair_host: HostMem<'ctx>,
 }
 
 impl<'ctx> ModelExec<'ctx> {
@@ -203,9 +182,10 @@ impl<'ctx> ModelExec<'ctx> {
         handle: &mut Handle<'ctx>,
         graph: nn::Graph<Tensor<*const VirByte, 2>>,
         n_tok: usize,
+        n_out: usize,
         pages: &mut MemPages,
     ) -> Self {
-        let graph = graph.lower(&[("n", n_tok)].into(), |t| t);
+        let graph = graph.lower(&[("n_tok", n_tok), ("n_out", n_out)].into(), |t| t);
 
         let mem_range_map = graph.mem_range_map(8 << 30, 512);
 
@@ -240,15 +220,113 @@ impl<'ctx> ModelExec<'ctx> {
         pages.unmap(&mut workspace);
 
         Self {
+            n_tok,
             execs,
             workspace,
             inputs,
             outputs,
         }
     }
+
+    fn launch(
+        &mut self,
+        tokens: &[u32],
+        attn_pos: usize,
+        kv_cache: &Tensor<*const VirByte, 2>,
+        pages: &mut MemPages,
+        attn: &Attn,
+        output_head: &mut OutputHead,
+        stream: &Stream,
+    ) -> u32 {
+        pages.map(&mut self.workspace);
+
+        let mut padding = vec![0; self.n_tok];
+        padding[..tokens.len()].copy_from_slice(tokens);
+        let pos = (attn_pos as u32..).take(self.n_tok).collect::<Vec<_>>();
+        let input_data = [
+            Blob::from_slice(&padding),
+            Blob::from_slice(&pos),
+            Blob::from_slice(&[tokens.len() as u32 - 1]),
+        ];
+
+        for (input, data) in zip(&self.inputs, input_data.clone()) {
+            let ptr = input.get().cast_mut();
+            memcpy_h2d(
+                unsafe { std::slice::from_raw_parts_mut(ptr.cast(), data.len()) },
+                &data,
+            )
+        }
+
+        for exec in &self.execs {
+            match exec {
+                Exec::Graph(graph) => {
+                    stream.launch_graph(graph);
+                }
+                Exec::Attention(box_) => {
+                    let Attention { iblk, q, k, v, o } = &**box_;
+
+                    // [nkvh, 2, nctx, dh]
+                    let kv_cache = kv_cache.clone().transform(|layout| layout.index(1, *iblk));
+                    let k_cache = kv_cache.clone().transform(|layout| layout.index(1, 0));
+                    let v_cache = kv_cache.clone().transform(|layout| layout.index(1, 1));
+
+                    attn.launch(
+                        &AttnArgs {
+                            q_layout: layout(q),
+                            q_base: offset_ptr(q).cast_mut().cast(),
+                            k_layout: layout(k),
+                            k_base: offset_ptr(k).cast(),
+                            v_layout: layout(v),
+                            v_base: offset_ptr(v).cast(),
+                            o_layout: layout(o),
+                            o_base: offset_ptr(o).cast_mut().cast(),
+                            k_cache_layout: layout(&k_cache),
+                            k_cache_base: offset_ptr(&k_cache).cast_mut().cast(),
+                            v_cache_layout: layout(&v_cache),
+                            v_cache_base: offset_ptr(&v_cache).cast_mut().cast(),
+                            mask: operators::fuesd_softmax::AttnMask::Causal,
+                            pos: attn_pos,
+                        },
+                        &mut [],
+                        stream,
+                    )
+                    .unwrap()
+                }
+            }
+        }
+        destruct!([logits] = self.outputs.clone());
+        let logits = logits.transform(|layout| layout.merge_be(0, 2).unwrap());
+        let OutputHead {
+            sample,
+            indices,
+            kv_pair,
+            kv_pair_host,
+        } = output_head;
+        sample
+            .launch(
+                &SampleArgs {
+                    kv_pair: TensorLayout {
+                        dt: KVPair::<()>::LAYOUT,
+                        layout: ArrayLayout::new(&[], &[], 0),
+                    },
+                    kv_pair_base: kv_pair.as_mut_ptr(),
+                    logits: layout(&logits),
+                    logits_base: offset_ptr(&logits).cast(),
+                    indices: layout(&indices),
+                    indices_base: indices.get().as_ptr(),
+                    config: Default::default(),
+                    seed: 0.4,
+                },
+                &mut [],
+                stream,
+            )
+            .unwrap();
+        stream.memcpy_d2h(kv_pair_host, kv_pair).synchronize();
+        unsafe { kv_pair_host.as_ptr().cast::<KVPair<f16>>().read() }.idx() as _
+    }
 }
 
-fn layout<T, const N: usize>(t: &Tensor<*const T, N>) -> TensorLayout {
+fn layout<T, const N: usize>(t: &Tensor<T, N>) -> TensorLayout {
     TensorLayout {
         dt: t.dt(),
         layout: t.layout().to_inline_size(),

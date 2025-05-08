@@ -1,4 +1,4 @@
-﻿use super::{Handle, Operator};
+﻿use super::{Handle, Operator, add::Add};
 use crate::{macros::*, offset_ptr};
 use ggus::ggml_quants::f16;
 use nn::Arg;
@@ -36,25 +36,46 @@ impl Operator for Linear {
         let (w, beta) = if residual {
             // 残差连接
             let residual = inputs.next().unwrap();
-            let w = inputs.next().unwrap();
-            if let Some(b) = inputs.next() {
-                todo!()
-            } else {
+            {
                 assert!(y.is_contiguous());
                 assert!(residual.is_contiguous());
-
                 let len = residual.shape().iter().fold(dt.nbytes(), |acc, d| acc * d);
                 stream.memcpy_d2d(
                     unsafe { std::slice::from_raw_parts_mut(*y.get() as _, len) },
                     unsafe { std::slice::from_raw_parts(*residual.get() as _, len) },
                 );
-
-                (w, 1.)
             }
+
+            let w = inputs.next().unwrap();
+            dims!([n, _] = y);
+            dims!([d, _] = w);
+            if let Some(b) = inputs.next() {
+                let b = b.transform(|layout| layout.tile_be(0, &[1, d]).broadcast(0, n));
+                // y = y + b
+                Add::launch(
+                    handle,
+                    Some(Arg::Float(1.)),
+                    [y.clone(), b],
+                    [y.clone()],
+                    stream,
+                );
+            }
+            (w, 1.)
         } else {
             let w = inputs.next().unwrap();
+            dims!([n, _] = y);
+            dims!([d, _] = w);
             if let Some(b) = inputs.next() {
-                todo!()
+                let b = b.transform(|layout| layout.tile_be(0, &[1, d]).broadcast(0, n));
+                // y = y + b
+                Add::launch(
+                    handle,
+                    Some(Arg::Float(0.)),
+                    [y.clone(), b],
+                    [y.clone()],
+                    stream,
+                );
+                (w, 1.)
             } else {
                 (w, 0.)
             }

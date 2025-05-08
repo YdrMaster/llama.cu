@@ -20,7 +20,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 [[package]]
 name = "arg"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=a0e7316#a0e731642b108583cef180a2f86131d2c6814226"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=ae973ed#ae973edecfa0e3377365521e6f08c65a04d39866"
 
 [[package]]
 name = "autocfg"
@@ -185,7 +185,7 @@ checksum = "43da5946c66ffcc7745f48db692ffbb10a83bfe0afd96235c5c2a4fb23994929"
 [[package]]
 name = "cublas"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=a815e41#a815e41c45a322fbfcd7475ce5aac6e758957b90"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=db4692c#db4692c36cbda1ff509c44fe71bfdd7305d87e7f"
 dependencies = [
  "bindgen",
  "build-script-cfg 0.1.0",
@@ -198,7 +198,7 @@ dependencies = [
 [[package]]
 name = "cuda"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=a815e41#a815e41c45a322fbfcd7475ce5aac6e758957b90"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=db4692c#db4692c36cbda1ff509c44fe71bfdd7305d87e7f"
 dependencies = [
  "bindgen",
  "build-script-cfg 0.1.0",
@@ -262,7 +262,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 [[package]]
 name = "exec"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=a0e7316#a0e731642b108583cef180a2f86131d2c6814226"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=ae973ed#ae973edecfa0e3377365521e6f08c65a04d39866"
 dependencies = [
  "arg",
  "graph",
@@ -444,7 +444,7 @@ checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
 [[package]]
 name = "graph"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=a0e7316#a0e731642b108583cef180a2f86131d2c6814226"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=ae973ed#ae973edecfa0e3377365521e6f08c65a04d39866"
 dependencies = [
  "bit-set",
 ]
@@ -591,7 +591,7 @@ dependencies = [
 [[package]]
 name = "mem"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=a0e7316#a0e731642b108583cef180a2f86131d2c6814226"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=ae973ed#ae973edecfa0e3377365521e6f08c65a04d39866"
 dependencies = [
  "arg",
  "exec",
@@ -623,7 +623,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 [[package]]
 name = "nccl"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=a815e41#a815e41c45a322fbfcd7475ce5aac6e758957b90"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=db4692c#db4692c36cbda1ff509c44fe71bfdd7305d87e7f"
 dependencies = [
  "bindgen",
  "build-script-cfg 0.1.0",
@@ -641,7 +641,7 @@ checksum = "86a1db1a5ed8293057d401ebd96872cb881a3693d9b55379ae320f652aea3714"
 [[package]]
 name = "nn"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=a0e7316#a0e731642b108583cef180a2f86131d2c6814226"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=ae973ed#ae973edecfa0e3377365521e6f08c65a04d39866"
 dependencies = [
  "arg",
  "digit-layout 0.3.0",
@@ -710,7 +710,7 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 [[package]]
 name = "operators"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=aea5b0f#aea5b0fcbf3243346be934212cbd38c9b82c9f8c"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=7b4151b#7b4151b6318c57d7c51bb2ec070c50b8ef34b87f"
 dependencies = [
  "build-script-cfg 0.0.0",
  "clrt",
@@ -881,12 +881,12 @@ source = "git+https://github.com/InfiniTensor/clrt?rev=984ac7a#984ac7a2f6088d990
 [[package]]
 name = "search-corex-tools"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=a815e41#a815e41c45a322fbfcd7475ce5aac6e758957b90"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=db4692c#db4692c36cbda1ff509c44fe71bfdd7305d87e7f"
 
 [[package]]
 name = "search-cuda-tools"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=a815e41#a815e41c45a322fbfcd7475ce5aac6e758957b90"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=db4692c#db4692c36cbda1ff509c44fe71bfdd7305d87e7f"
 dependencies = [
  "find_cuda_helper",
 ]

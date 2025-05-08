@@ -17,9 +17,7 @@ impl Operator for Rope {
         outputs: impl IntoIterator<Item = Tensor<*const VirByte, N>>,
         stream: &Stream,
     ) {
-        if arg.is_some() {
-            panic!("Rope不需要额外参数");
-        }
+        assert!(arg.is_none());
 
         destruct!([x, pos, sin, cos] = inputs);
         destruct!([y] = outputs);
@@ -74,15 +72,13 @@ impl Operator for Rope {
             .unwrap_or(1);
         let nh_h = d_head / nh_l;
 
-        let code = code(dt_p, dt_t);
-
         let key = [
             ModuleKey::Text("rope"),
             ModuleKey::Type(dt_t),
             ModuleKey::Type(dt_p),
         ]
         .into_iter();
-        let module = handle.compile(key.collect(), || code);
+        let module = handle.compile(key.collect(), || code(dt_p, dt_t));
         let kernel = module.get_kernel(c"rope");
 
         let params = params![

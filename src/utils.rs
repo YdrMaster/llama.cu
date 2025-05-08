@@ -5,6 +5,7 @@ use operators::cuda::{CurrentCtx, DevByte, VirByte, memcpy_d2h};
 use std::{fmt, time::Instant};
 use tensor::digit_layout::types;
 
+#[allow(unused)]
 pub(super) fn fmt<const N: usize>(tensor: &Tensor<*const VirByte, N>, _ctx: &CurrentCtx) {
     let mem_range = tensor.layout().data_range();
     let ptr = tensor.get().cast::<DevByte>();
