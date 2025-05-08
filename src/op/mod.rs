@@ -1,6 +1,7 @@
 ﻿mod add;
 mod embedding;
 mod linear;
+mod nt_attention;
 mod rms_norm;
 mod rope;
 mod swiglu;
@@ -15,6 +16,7 @@ pub use linear::Linear;
 pub use rms_norm::RmsNorm;
 pub use rope::Rope;
 pub use swiglu::Swiglu;
+pub use nt_attention::nt_attention;
 
 pub trait Operator {
     fn launch<const N: usize>(

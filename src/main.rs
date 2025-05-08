@@ -26,7 +26,7 @@ use operators::{
 };
 use range_collector::RangeCollector;
 use std::iter::zip;
-use tensor::ndarray_layout::ArrayLayout;
+use tensor::{digit_layout::DigitLayout, ndarray_layout::ArrayLayout};
 
 fn main() {
     let mut timer = utils::Timer::new();
@@ -256,6 +256,13 @@ impl<'ctx> ModelExec<'ctx> {
                 &data,
             )
         }
+        let mask = Tensor::<usize, 2>::from_dim_slice(
+            types::F16,
+            &[1, 1, self.n_tok, attn_pos + self.n_tok],
+        )
+        .map(|_| build_mask(types::F16, attn_pos, self.n_tok));
+        let mask = mask.as_ref().map(|blob| stream.from_host(blob));
+        let mask = mask.as_ref().map(|blob| blob.as_ptr().cast::<VirByte>());
 
         for exec in &self.execs {
             match exec {
@@ -265,32 +272,74 @@ impl<'ctx> ModelExec<'ctx> {
                 Exec::Attention(box_) => {
                     let Attention { iblk, q, k, v, o } = &**box_;
 
-                    // [nkvh, 2, nctx, dh]
-                    let kv_cache = kv_cache.clone().transform(|layout| layout.index(1, *iblk));
-                    let k_cache = kv_cache.clone().transform(|layout| layout.index(1, 0));
-                    let v_cache = kv_cache.clone().transform(|layout| layout.index(1, 1));
+                    let q = q
+                        .clone()
+                        .transform(|layout| layout.tile_be(0, &[1, layout.shape()[0]]));
+                    let k = k
+                        .clone()
+                        .transform(|layout| layout.tile_be(0, &[1, layout.shape()[0]]));
+                    let v = v
+                        .clone()
+                        .transform(|layout| layout.tile_be(0, &[1, layout.shape()[0]]));
+                    let o = o
+                        .clone()
+                        .transform(|layout| layout.tile_be(0, &[1, layout.shape()[0]]));
 
-                    attn.launch(
-                        &AttnArgs {
-                            q_layout: layout(q),
-                            q_base: offset_ptr(q).cast_mut().cast(),
-                            k_layout: layout(k),
-                            k_base: offset_ptr(k).cast(),
-                            v_layout: layout(v),
-                            v_base: offset_ptr(v).cast(),
-                            o_layout: layout(o),
-                            o_base: offset_ptr(o).cast_mut().cast(),
-                            k_cache_layout: layout(&k_cache),
-                            k_cache_base: offset_ptr(&k_cache).cast_mut().cast(),
-                            v_cache_layout: layout(&v_cache),
-                            v_cache_base: offset_ptr(&v_cache).cast_mut().cast(),
-                            mask: operators::fuesd_softmax::AttnMask::Causal,
-                            pos: attn_pos,
-                        },
-                        &mut [],
-                        stream,
-                    )
-                    .unwrap()
+                    // [1, nkvh, 2, nctx, dh]
+                    let kv_cache = kv_cache.clone().transform(|layout| {
+                        layout.index(1, *iblk).tile_be(0, &[1, layout.shape()[0]])
+                    });
+                    let kv_cahce_end = kv_cache
+                        .clone()
+                        .transform(|layout| layout.slice(3, attn_pos, 1, self.n_tok));
+                    let k_cache = kv_cache.clone().transform(|layout| layout.index(2, 0));
+                    let v_cache = kv_cache.clone().transform(|layout| layout.index(2, 1));
+                    let k_cache_end = kv_cahce_end.clone().transform(|layout| layout.index(2, 0));
+                    let v_cache_end = kv_cahce_end.clone().transform(|layout| layout.index(2, 1));
+
+                    op::nt_attention(
+                        &q,
+                        &k,
+                        &v,
+                        &k_cache,
+                        &k_cache_end.clone(),
+                        &v_cache,
+                        &v_cache_end.clone(),
+                        &mask.clone(),
+                        &o.clone(),
+                        &stream,
+                    );
+                    stream.synchronize();
+                    println!("-------------------------");
+                    utils::fmt(&o, stream.ctx());
+                    break;
+
+                    // // [nkvh, 2, nctx, dh]
+                    // let kv_cache = kv_cache.clone().transform(|layout| layout.index(1, *iblk));
+                    // let k_cache = kv_cache.clone().transform(|layout| layout.index(1, 0));
+                    // let v_cache = kv_cache.clone().transform(|layout| layout.index(1, 1));
+
+                    // attn.launch(
+                    //     &AttnArgs {
+                    //         q_layout: layout(q),
+                    //         q_base: offset_ptr(q).cast_mut().cast(),
+                    //         k_layout: layout(k),
+                    //         k_base: offset_ptr(k).cast(),
+                    //         v_layout: layout(v),
+                    //         v_base: offset_ptr(v).cast(),
+                    //         o_layout: layout(o),
+                    //         o_base: offset_ptr(o).cast_mut().cast(),
+                    //         k_cache_layout: layout(&k_cache),
+                    //         k_cache_base: offset_ptr(&k_cache).cast_mut().cast(),
+                    //         v_cache_layout: layout(&v_cache),
+                    //         v_cache_base: offset_ptr(&v_cache).cast_mut().cast(),
+                    //         mask: operators::fuesd_softmax::AttnMask::Causal,
+                    //         pos: attn_pos,
+                    //     },
+                    //     &mut [],
+                    //     stream,
+                    // )
+                    // .unwrap()
                 }
             }
         }
@@ -312,7 +361,7 @@ impl<'ctx> ModelExec<'ctx> {
                     kv_pair_base: kv_pair.as_mut_ptr(),
                     logits: layout(&logits),
                     logits_base: offset_ptr(&logits).cast(),
-                    indices: layout(&indices),
+                    indices: layout(indices),
                     indices_base: indices.get().as_ptr(),
                     config: Default::default(),
                     seed: 0.4,
@@ -323,6 +372,27 @@ impl<'ctx> ModelExec<'ctx> {
             .unwrap();
         stream.memcpy_d2h(kv_pair_host, kv_pair).synchronize();
         unsafe { kv_pair_host.as_ptr().cast::<KVPair<f16>>().read() }.idx() as _
+    }
+}
+
+fn build_mask(dt: DigitLayout, pos: usize, seq: usize) -> Blob {
+    let mut ans = Blob::new(dt.nbytes() * seq * (pos + seq));
+    match dt {
+        types::F16 => {
+            let ([], slice, []) = (unsafe { ans.align_to_mut::<f16>() }) else {
+                unreachable!()
+            };
+            fill_mask(slice, pos, seq, f16::ZERO, -f16::INFINITY)
+        }
+        _ => todo!(),
+    }
+    ans
+}
+
+fn fill_mask<T: Copy>(slice: &mut [T], pos: usize, seq: usize, zero: T, neg_inf: T) {
+    slice.fill(zero);
+    for r in 0..seq - 1 {
+        slice[r * (pos + seq)..][..pos + seq][pos + r + 1..].fill(neg_inf)
     }
 }
 

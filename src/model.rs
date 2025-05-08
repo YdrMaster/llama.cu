@@ -145,7 +145,7 @@ pub fn sample_indices<'ctx, const N: usize>(
     type Op = operators::random_sample::cuda::Operator;
     let nvoc = meta![gguf => tokenizer_ggml_tokens].len();
     let Indices { n, mem } = Op::build_indices(nvoc, stream);
-    Tensor::from_dim_slice(types::U32, &[n]).map(|_| mem)
+    Tensor::from_dim_slice(types::U32, [n]).map(|_| mem)
 }
 
 /// 构造 sin cos 表张量

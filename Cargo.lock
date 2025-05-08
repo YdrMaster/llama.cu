@@ -564,6 +564,8 @@ checksum = "f9fbbcab51052fe104eb5e5d351cf728d30a5be1fe14d9be8a3b097481fb97de"
 name = "llama-cu"
 version = "0.0.0"
 dependencies = [
+ "bindgen",
+ "find_cuda_helper",
  "ggus",
  "graph",
  "memmap2",
