@@ -185,7 +185,7 @@ checksum = "43da5946c66ffcc7745f48db692ffbb10a83bfe0afd96235c5c2a4fb23994929"
 [[package]]
 name = "cublas"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=db4692c#db4692c36cbda1ff509c44fe71bfdd7305d87e7f"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=17109a0#17109a0d5a5571342a003543b19dff592260976c"
 dependencies = [
  "bindgen",
  "build-script-cfg 0.1.0",
@@ -198,7 +198,7 @@ dependencies = [
 [[package]]
 name = "cuda"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=db4692c#db4692c36cbda1ff509c44fe71bfdd7305d87e7f"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=17109a0#17109a0d5a5571342a003543b19dff592260976c"
 dependencies = [
  "bindgen",
  "build-script-cfg 0.1.0",
@@ -623,7 +623,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 [[package]]
 name = "nccl"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=db4692c#db4692c36cbda1ff509c44fe71bfdd7305d87e7f"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=17109a0#17109a0d5a5571342a003543b19dff592260976c"
 dependencies = [
  "bindgen",
  "build-script-cfg 0.1.0",
@@ -710,7 +710,7 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 [[package]]
 name = "operators"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=7b4151b#7b4151b6318c57d7c51bb2ec070c50b8ef34b87f"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=c4be5d0#c4be5d0c4e721f71258e63007e2636c89f4e8393"
 dependencies = [
  "build-script-cfg 0.0.0",
  "clrt",
@@ -881,12 +881,12 @@ source = "git+https://github.com/InfiniTensor/clrt?rev=984ac7a#984ac7a2f6088d990
 [[package]]
 name = "search-corex-tools"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=db4692c#db4692c36cbda1ff509c44fe71bfdd7305d87e7f"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=17109a0#17109a0d5a5571342a003543b19dff592260976c"
 
 [[package]]
 name = "search-cuda-tools"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=db4692c#db4692c36cbda1ff509c44fe71bfdd7305d87e7f"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=17109a0#17109a0d5a5571342a003543b19dff592260976c"
 dependencies = [
  "find_cuda_helper",
 ]

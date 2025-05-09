@@ -92,10 +92,6 @@ impl Timer {
     pub fn push(&mut self, name: impl std::fmt::Display) {
         self.0.push((name.to_string(), Instant::now()))
     }
-    #[allow(unused)]
-    pub fn clear(&mut self) {
-        self.0.clear()
-    }
 }
 
 impl std::fmt::Display for Timer {

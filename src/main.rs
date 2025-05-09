@@ -1,4 +1,5 @@
 mod blob;
+mod distribution;
 mod gguf;
 mod handle;
 mod loader;
@@ -10,6 +11,7 @@ mod range_collector;
 mod utils;
 
 use blob::Blob;
+use distribution::{Distribution, TPAction, TPWeight, map_edge};
 use gguf::{GGufModel, map_files};
 use ggus::ggml_quants::{digit_layout::types, f16};
 use handle::{Attention, Exec, Handle};
@@ -24,18 +26,17 @@ use operators::{
     cuda::{self, DevMem, Device, Gpu, HostMem, Stream, VirByte, VirMem, memcpy_h2d},
     random_sample::{Args as SampleArgs, KVPair, cuda::Operator as Sample},
 };
-use range_collector::RangeCollector;
-use std::iter::zip;
+use std::{collections::HashSet, iter::zip};
 use tensor::ndarray_layout::ArrayLayout;
 
 fn main() {
     let mut timer = utils::Timer::new();
-
+    // 从文件加载权重
     let maps = map_files(std::env::args().nth(1).unwrap());
     let mut gguf = GGufModel::read(maps.iter().map(|x| &**x));
     let llama = model::init(&mut gguf);
     timer.push("load");
-
+    // 构造图表示
     let nn::Graph(graph::Graph { topo, nodes, edges }) = GraphBuilder::default()
         .register_op("embedding", nn_op::embedding::Embedding)
         .register_op("rms-norm", nn_op::normalization::RmsNorm)
@@ -57,24 +58,9 @@ fn main() {
         )
         .unwrap();
     timer.push("build");
-
-    // for cuda
-    let mut ranges = RangeCollector::new(512);
-    let edges = edges
-        .into_iter()
-        .map(|nn::Edge { meta, external }| nn::Edge {
-            meta,
-            external: external.map(|nn::External { name, item }| nn::External {
-                name,
-                item: {
-                    let ans = gguf.tensors[&*item].as_ref();
-                    ranges.insert(ans.get());
-                    ans
-                },
-            }),
-        })
-        .collect::<Box<_>>();
-
+    // 排布权重存储
+    let (ranges, edges) = map_edge(&gguf, Distribution::MONO, edges.clone());
+    // 权重加载
     assert!(cuda::init().is_ok());
     let dev = Device::new(0);
     let mut pages = MemPages::new(&dev);
@@ -89,33 +75,37 @@ fn main() {
         );
 
         let stream = ctx.stream();
+        let mut mapped = HashSet::new();
         edges
             .into_iter()
             .map(|nn::Edge { meta, external }| nn::Edge {
                 meta,
-                external: external.map(|nn::External { name, item }| nn::External {
-                    name,
-                    item: item.map(|data| {
-                        let range = ranges.get(data.as_ptr()).unwrap().clone();
-                        let dst = &mut weight[range];
-                        loader.load(dst, data, &stream);
-                        dst.as_ptr().cast::<VirByte>()
-                    }),
+                external: external.map(|nn::External { name, item }| {
+                    let TPWeight { act, host } = item;
+                    let range = &ranges[&(act.clone(), host.get().as_ptr())];
+                    let dev = &mut weight[range.clone()];
+                    if mapped.insert(range.clone()) {
+                        match act {
+                            Some(TPAction { wt, dist }) => {
+                                loader.load(dev, &stream, |dst| wt.move_data(dist, dst, &host));
+                            }
+                            None => {
+                                loader.load(dev, &stream, |dst| dst.copy_from_slice(host.get()))
+                            }
+                        }
+                    }
+                    nn::External {
+                        name,
+                        item: host.map(|_| dev.as_ptr().cast()),
+                    }
                 }),
             })
             .collect::<Box<_>>()
     });
     timer.push("cuda");
-
     // 创建 kv cache
-    let kv_cache = model::kv_cache::<2>(&gguf); // kv cache 的最大容量
-    let _each = kv_cache.get() / kv_cache.shape()[0]; // kv cache 每个 token 的尺寸
-    let mut kv_cache_region = pages.reserve_vir(*kv_cache.get()); // 为 kv cache 分配虚页
-    let kv_cache = kv_cache
-        .map(|_| kv_cache_region.as_ptr()) // 存入张量
-        .transform(|layout| layout.transpose(&[3, 1, 2, 0])); // 转置 [nkvh, nblk, 2, nctx, dh]
-    pages.map(&mut kv_cache_region);
-
+    let kv_cache = KVCache::new(&gguf, &mut pages);
+    // 推理
     let graph = nn::Graph(graph::Graph { topo, nodes, edges });
     let gpu = Gpu::new(dev.context(), Default::default());
     let attn = Attn::new(&gpu);
@@ -149,7 +139,7 @@ fn main() {
             let next = models[model_idx].launch(
                 &tokens,
                 pos,
-                &kv_cache,
+                &kv_cache.tensor_vir,
                 &mut pages,
                 &attn,
                 &mut output_head,
@@ -159,7 +149,28 @@ fn main() {
             pos += tokens.len();
             tokens = vec![next];
         }
-    });
+    })
+}
+
+struct KVCache {
+    tensor_vir: Tensor<*const VirByte, 2>,
+    mem_region: AddrRegion,
+}
+
+impl KVCache {
+    pub fn new(gguf: &GGufModel, pages: &mut MemPages) -> Self {
+        let kv_cache = model::kv_cache::<2>(gguf); // kv cache 的最大容量
+        let _each = kv_cache.get() / kv_cache.shape()[0]; // kv cache 每个 token 的尺寸
+        let mut mem_region = pages.reserve_vir(*kv_cache.get()); // 为 kv cache 分配虚页
+        let tensor_vir = kv_cache
+            .map(|_| mem_region.as_ptr()) // 存入张量
+            .transform(|layout| layout.transpose(&[3, 1, 2, 0])); // 转置 [nkvh, nblk, 2, nctx, dh]
+        pages.map(&mut mem_region);
+        Self {
+            tensor_vir,
+            mem_region,
+        }
+    }
 }
 
 struct ModelExec<'ctx> {
@@ -312,7 +323,7 @@ impl<'ctx> ModelExec<'ctx> {
                     kv_pair_base: kv_pair.as_mut_ptr(),
                     logits: layout(&logits),
                     logits_base: offset_ptr(&logits).cast(),
-                    indices: layout(&indices),
+                    indices: layout(indices),
                     indices_base: indices.get().as_ptr(),
                     config: Default::default(),
                     seed: 0.4,

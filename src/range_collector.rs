@@ -1,12 +1,17 @@
-﻿use std::{collections::HashMap, hash::Hash, ops::Range};
+﻿use std::{
+    borrow::Borrow,
+    collections::HashMap,
+    hash::Hash,
+    ops::{Index, Range},
+};
 
-pub struct RangeCollector<T> {
+pub struct RangeCollector<K> {
     calculator: RangeCalculator,
-    ranges: HashMap<*const T, Range<usize>>,
+    ranges: HashMap<K, Range<usize>>,
     sizes: NumCollector<usize>,
 }
 
-impl<T> RangeCollector<T> {
+impl<K> RangeCollector<K> {
     pub fn new(alignment: usize) -> Self {
         Self {
             calculator: RangeCalculator {
@@ -18,10 +23,21 @@ impl<T> RangeCollector<T> {
         }
     }
 
-    pub fn insert(&mut self, slice: &[T]) {
+    #[inline]
+    pub const fn size(&self) -> usize {
+        self.calculator.size
+    }
+
+    #[inline]
+    pub fn sizes(&self) -> impl Iterator<Item = (usize, usize)> {
+        self.sizes.0.iter().map(|(&a, &b)| (a, b))
+    }
+}
+
+impl<K: Eq + Hash> RangeCollector<K> {
+    pub fn insert(&mut self, key: K, len: usize) {
         use std::collections::hash_map::Entry::{Occupied, Vacant};
-        let len = size_of_val(slice);
-        match self.ranges.entry(slice.as_ptr()) {
+        match self.ranges.entry(key) {
             Occupied(entry) => {
                 assert_eq!(entry.get().len(), len)
             }
@@ -31,20 +47,17 @@ impl<T> RangeCollector<T> {
             }
         }
     }
+}
 
-    #[inline]
-    pub const fn size(&self) -> usize {
-        self.calculator.size
-    }
+impl<K, Q> Index<&Q> for RangeCollector<K>
+where
+    K: Borrow<Q> + Eq + Hash,
+    Q: Hash + Eq,
+{
+    type Output = Range<usize>;
 
-    #[inline]
-    pub fn get(&self, ptr: *const T) -> Option<&Range<usize>> {
-        self.ranges.get(&ptr)
-    }
-
-    #[inline]
-    pub fn sizes(&self) -> impl Iterator<Item = (usize, usize)> {
-        self.sizes.0.iter().map(|(&a, &b)| (a, b))
+    fn index(&self, index: &Q) -> &Self::Output {
+        &self.ranges[index]
     }
 }
 

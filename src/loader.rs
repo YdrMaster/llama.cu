@@ -25,7 +25,7 @@ impl<'ctx> WeightLoader<'ctx> {
         }
     }
 
-    pub fn load(&mut self, dst: &mut [DevByte], src: &[u8], stream: &Stream<'ctx>) {
+    pub fn load(&mut self, dst: &mut [DevByte], stream: &Stream<'ctx>, f: impl FnOnce(&mut [u8])) {
         // 此次加载的任务规模
         let size = size_of_val(dst);
         // 从 slab 分配器调用
@@ -34,7 +34,7 @@ impl<'ctx> WeightLoader<'ctx> {
             .take(&size)
             .unwrap_or_else(|| stream.ctx().malloc_host::<u8>(size));
         // host -> locked -> device
-        host.copy_from_slice(src);
+        f(&mut host);
         stream.memcpy_h2d(dst, &host);
 
         if self.no_reuse.contains(&size) {
