@@ -270,6 +270,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fancy-regex"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e24cb5a94bcae1e5408b0effca5cd7172ea3c5755049c5f3af4cd283a165298"
+dependencies = [
+ "bit-set",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
 name = "find_cuda_helper"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -571,6 +582,7 @@ dependencies = [
  "operators",
  "regex",
  "tensor",
+ "tokeneer",
 ]
 
 [[package]]
@@ -742,6 +754,15 @@ name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
+name = "patricia_tree"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edb45b6331bbdbb54c9a29413703e892ab94f83a31e4a546c778495a91e7fbca"
+dependencies = [
+ "bitflags",
+]
 
 [[package]]
 name = "prettyplease"
@@ -966,6 +987,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tokeneer"
+version = "0.1.0"
+source = "git+https://github.com/InfiniTensor/tokeneer?rev=12c2d99#12c2d99894994cea01d731207435c7c2d181cda1"
+dependencies = [
+ "fancy-regex",
+ "ggus",
+ "log",
+ "memchr",
+ "memmap2",
+ "patricia_tree",
+ "regex",
 ]
 
 [[package]]

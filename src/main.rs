@@ -26,13 +26,19 @@ use operators::{
     cuda::{self, DevMem, Device, Gpu, HostMem, Stream, VirByte, VirMem, memcpy_h2d},
     random_sample::{Args as SampleArgs, KVPair, cuda::Operator as Sample},
 };
-use std::{collections::HashSet, iter::zip};
+use std::{collections::HashSet, io::Write, iter::zip};
 use tensor::ndarray_layout::ArrayLayout;
+use tokeneer::Bpe;
 
 fn main() {
+    let mut args = std::env::args();
+    let _ = args.next();
+    let path = args.next().unwrap();
+    let prompt = args.next().unwrap_or("Once upon a time,".into());
+
     let mut timer = utils::Timer::new();
     // 从文件加载权重
-    let maps = map_files(std::env::args().nth(1).unwrap());
+    let maps = map_files(path);
     let mut gguf = GGufModel::read(maps.iter().map(|x| &**x));
     let llama = model::init(&mut gguf);
     timer.push("load");
@@ -122,6 +128,8 @@ fn main() {
         let mut handle = Handle::new(ctx);
         timer.push("prepare");
 
+        let tokeneer = Bpe::from_gguf(&gguf);
+
         let mut models = (0..=6)
             .map(|i| {
                 let ans = ModelExec::new(&mut handle, graph.clone(), 1 << i, 1, &mut pages);
@@ -132,7 +140,9 @@ fn main() {
 
         println!("{timer}");
 
-        let mut tokens = vec![9646, 5193, 264, 882, 11];
+        print!("{prompt}");
+        std::io::stdout().flush().unwrap();
+        let mut tokens = tokeneer.encode(&prompt);
         let mut pos = 0;
         loop {
             let model_idx = tokens.len().next_power_of_two().trailing_zeros() as usize;
@@ -145,7 +155,8 @@ fn main() {
                 &mut output_head,
                 &stream,
             );
-            println!("next = {next}");
+            print!("{}", tokeneer.decode(&[next]));
+            std::io::stdout().flush().unwrap();
             pos += tokens.len();
             tokens = vec![next];
         }

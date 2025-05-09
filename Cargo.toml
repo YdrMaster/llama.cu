@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 operators = { git = "https://github.com/YdrMaster/operators-rs", rev = "c4be5d0" }
+tokeneer = { git = "https://github.com/InfiniTensor/tokeneer", rev = "12c2d99" }
 memmap2 = "0.9"
 regex = "1.11"
 nn = { git = "https://github.com/YdrMaster/InfiniNN", rev = "ae973ed" }
