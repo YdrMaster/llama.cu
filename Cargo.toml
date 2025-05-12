@@ -12,3 +12,11 @@ nn = { git = "https://github.com/YdrMaster/InfiniNN", rev = "ae973ed" }
 graph = { git = "https://github.com/YdrMaster/InfiniNN", rev = "ae973ed" }
 ggus = { git = "https://github.com/InfiniTensor/gguf", rev = "23c362f" }
 tensor = { git = "https://github.com/YdrMaster/tensor", rev = "66450a9" }
+
+itertools = "0.14"
+mem-rearrange = { git = "https://github.com/pwhMass/mem-rearrange", rev = "062477" }
+
+
+
+[dev-dependencies]
+rand = "0.9"
