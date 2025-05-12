@@ -1,5 +1,4 @@
 mod blob;
-mod distribution;
 mod gguf;
 mod handle;
 mod loader;
@@ -11,7 +10,6 @@ mod range_collector;
 mod utils;
 
 use blob::Blob;
-use distribution::{Distribution, TPAction, TPWeight, map_edge};
 use gguf::{GGufModel, map_files};
 use ggus::ggml_quants::{digit_layout::types, f16};
 use handle::{Attention, Exec, Handle};
@@ -19,13 +17,14 @@ use loader::WeightLoader;
 use macros::destruct;
 use memory::{AddrRegion, MemPages};
 use model::sample_indices;
-use nn::{Dim, GraphBuilder, Tensor, TensorMeta, op as nn_op};
+use nn::{Dim, GraphBuilder, TPAction, TPTensor, Tensor, TensorMeta, op as nn_op};
 use operators::{
     Operator, TensorLayout,
     attention_kv_cached::{Args as AttnArgs, cuda::Operator as Attn},
     cuda::{self, DevMem, Device, Gpu, HostMem, Stream, VirByte, VirMem, memcpy_h2d},
     random_sample::{Args as SampleArgs, KVPair, cuda::Operator as Sample},
 };
+use range_collector::RangeCollector;
 use std::{collections::HashSet, io::Write, iter::zip};
 use tensor::ndarray_layout::ArrayLayout;
 use tokeneer::Bpe;
@@ -65,7 +64,22 @@ fn main() {
         .unwrap();
     timer.push("build");
     // 排布权重存储
-    let (ranges, edges) = map_edge(&gguf, Distribution::MONO, edges.clone());
+    let mut ranges = RangeCollector::new(512);
+    let edges = edges
+        .into_iter()
+        .map(|nn::Edge { meta, external }| nn::Edge {
+            meta,
+            external: external.map(|nn::External { name, item }| {
+                let TPTensor { act, val } = item;
+                let tensor = gguf.tensors[&*val].as_deref();
+                ranges.insert((act.clone(), tensor.get().as_ptr()), tensor.get().len());
+                nn::External {
+                    name,
+                    item: TPTensor { act, val: tensor },
+                }
+            }),
+        })
+        .collect::<Box<_>>();
     // 权重加载
     assert!(cuda::init().is_ok());
     let dev = Device::new(0);
@@ -87,22 +101,22 @@ fn main() {
             .map(|nn::Edge { meta, external }| nn::Edge {
                 meta,
                 external: external.map(|nn::External { name, item }| {
-                    let TPWeight { act, host } = item;
-                    let range = &ranges[&(act.clone(), host.get().as_ptr())];
+                    let TPTensor { act, val } = item;
+                    let range = &ranges[&(act.clone(), val.get().as_ptr())];
                     let dev = &mut weight[range.clone()];
                     if mapped.insert(range.clone()) {
                         match act {
                             Some(TPAction { wt, dist }) => {
-                                loader.load(dev, &stream, |dst| wt.move_data(dist, dst, &host));
+                                loader.load(dev, &stream, |dst| wt.move_data(dist, dst, &val));
                             }
                             None => {
-                                loader.load(dev, &stream, |dst| dst.copy_from_slice(host.get()))
+                                loader.load(dev, &stream, |dst| dst.copy_from_slice(val.get()));
                             }
                         }
                     }
                     nn::External {
                         name,
-                        item: host.map(|_| dev.as_ptr().cast()),
+                        item: val.map(|_| dev.as_ptr().cast()),
                     }
                 }),
             })

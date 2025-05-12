@@ -2,7 +2,8 @@
     macros::destruct,
     op::{self, ModuleKey, Operator},
 };
-use nn::{Node, Tensor};
+use graph::Named;
+use nn::Tensor;
 use operators::{
     cublas::Cublas,
     cuda::{CurrentCtx, GraphExec, Module, Ptx, VirByte},
@@ -58,19 +59,19 @@ impl<'ctx> Handle<'ctx> {
             outputs,
         } in exec
         {
-            let Node { name, op, arg } = node;
+            let Named { name, value: op } = node;
             macro_rules! add_to_graph {
                 ($op:ident) => {
                     op::$op::launch(
                         self,
-                        arg,
+                        op.arg,
                         inputs,
                         outputs,
                         stream.get_or_insert_with(|| self.ctx.stream().capture()),
                     )
                 };
             }
-            match &*op {
+            match &*op.name {
                 "embedding" => add_to_graph!(Embedding),
                 "rms-norm" => add_to_graph!(RmsNorm),
                 "linear" => add_to_graph!(Linear),
@@ -87,7 +88,7 @@ impl<'ctx> Handle<'ctx> {
 
                     destruct!([q, k, v] = inputs);
                     destruct!([o] = outputs);
-                    let Some(nn::Arg::Int(dh)) = arg else {
+                    let Some(nn::Arg::Int(dh)) = op.arg else {
                         panic!()
                     };
                     let dh = dh as usize;
@@ -112,7 +113,7 @@ impl<'ctx> Handle<'ctx> {
                     exec_.push(Exec::Attention(Box::new(Attention { iblk, q, k, v, o })))
                 }
                 _ => {
-                    print!("todo! {op} ({arg:?})");
+                    print!("todo! {} ({:?})", op.name, op.arg);
                     for t in inputs {
                         print!(" {}{:?}", t.dt(), t.shape())
                     }
