@@ -5,13 +5,21 @@
 };
 use ggus::GGufMetaMapExt;
 use nn::Tensor;
-use operators::{
-    cuda::{DevMem, Stream},
-    random_sample::{Indices, RandomSample},
-};
 use tensor::digit_layout::types;
 
-pub fn init(gguf: &mut GGufModel) -> nn::LLaMA<String> {
+pub fn insert_sin_cos(gguf: &mut GGufModel) {
+    let nctx = meta![gguf => llm_context_length];
+    let d = meta![gguf => llm_embedding_length];
+    let nh = meta![gguf => llm_attention_head_count];
+    let dh = meta![gguf => llm_rope_dimension_count; d / nh];
+    let theta = meta![gguf => llm_rope_freq_base; 1e4];
+
+    let [sin, cos] = build_sin_cos(nctx, dh, theta);
+    gguf.tensors.insert("sin_table", sin);
+    gguf.tensors.insert("cos_table", cos);
+}
+
+pub fn init<'a>(gguf: &'a GGufModel<'a>) -> nn::LLaMA<Tensor<&'a [u8], 2>> {
     let arch = meta![gguf => general_architecture];
     let dt_bias = match arch {
         "llama" => None,
@@ -31,11 +39,8 @@ pub fn init(gguf: &mut GGufModel) -> nn::LLaMA<String> {
     let dt_embd = gguf.tensors["token_embd.weight"].dt();
     let dt_norm = gguf.tensors["output_norm.weight"].dt();
     let dt_linear = gguf.tensors["blk.0.attn_qkv.weight"].dt();
-    let theta = meta![gguf => llm_rope_freq_base; 1e4];
 
-    let [sin, cos] = build_sin_cos(nctx, dh, theta);
-    gguf.tensors.insert("sin_table", sin);
-    gguf.tensors.insert("cos_table", cos);
+    let get = |name: &str| gguf.tensors[name].as_deref();
 
     ::nn::LLaMA {
         embedding: ::nn::Embedding {
@@ -43,7 +48,7 @@ pub fn init(gguf: &mut GGufModel) -> nn::LLaMA<String> {
             d,
             wte: ::nn::Table {
                 row: nvoc,
-                weight: "token_embd.weight".to_string(),
+                weight: get("token_embd.weight"),
             },
             wpe: None,
         },
@@ -54,7 +59,7 @@ pub fn init(gguf: &mut GGufModel) -> nn::LLaMA<String> {
                     epsilon: epsilon as _,
                     items: ::nn::NormType::RmsNorm {
                         dt: dt_norm,
-                        scale: format!("blk.{iblk}.attn_norm.weight"),
+                        scale: get(&format!("blk.{iblk}.attn_norm.weight")),
                     },
                 },
                 attn: ::nn::Attention {
@@ -63,18 +68,18 @@ pub fn init(gguf: &mut GGufModel) -> nn::LLaMA<String> {
                     qkv: ::nn::Linear::new(
                         dt_linear,
                         [(nh + nkvh + nkvh) * dh, d],
-                        format!("blk.{iblk}.attn_qkv.weight"),
-                        dt_bias.map(|dt| (dt, format!("blk.{iblk}.attn_qkv.bias"))),
+                        get(&format!("blk.{iblk}.attn_qkv.weight")),
+                        dt_bias.map(|dt| (dt, get(&format!("blk.{iblk}.attn_qkv.bias")))),
                     ),
                     rope: Some(::nn::RoPE {
                         nctx,
-                        sin: "sin_table".into(),
-                        cos: "cos_table".into(),
+                        sin: get("sin_table"),
+                        cos: get("cos_table"),
                     }),
                     output: ::nn::Linear::new(
                         dt_linear,
                         [d, nh * dh],
-                        format!("blk.{iblk}.attn_output.weight"),
+                        get(&format!("blk.{iblk}.attn_output.weight")),
                         None,
                     ),
                 },
@@ -83,21 +88,21 @@ pub fn init(gguf: &mut GGufModel) -> nn::LLaMA<String> {
                     epsilon: epsilon as _,
                     items: ::nn::NormType::RmsNorm {
                         dt: dt_norm,
-                        scale: format!("blk.{iblk}.ffn_norm.weight"),
+                        scale: get(&format!("blk.{iblk}.ffn_norm.weight")),
                     },
                 },
                 ffn: ::nn::Mlp {
                     up: ::nn::Linear::new(
                         dt_linear,
                         [di * 2, d],
-                        format!("blk.{iblk}.ffn_gate_up.weight"),
+                        get(&format!("blk.{iblk}.ffn_gate_up.weight")),
                         None,
                     ),
                     act: ::nn::Activation::SwiGLU,
                     down: ::nn::Linear::new(
                         dt_linear,
                         [d, di],
-                        format!("blk.{iblk}.ffn_down.weight"),
+                        get(&format!("blk.{iblk}.ffn_down.weight")),
                         None,
                     ),
                 },
@@ -108,18 +113,17 @@ pub fn init(gguf: &mut GGufModel) -> nn::LLaMA<String> {
             epsilon: epsilon as _,
             items: ::nn::NormType::RmsNorm {
                 dt: dt_norm,
-                scale: "output_norm.weight".into(),
+                scale: get("output_norm.weight"),
             },
         },
         lm_head: ::nn::Linear::new(
             dt_linear,
             [nvoc, d],
-            if gguf.tensors.contains_key("output.weight") {
+            get(if gguf.tensors.contains_key("output.weight") {
                 "output.weight"
             } else {
                 "token_embd.weight"
-            }
-            .into(),
+            }),
             None,
         ),
     }
@@ -135,17 +139,6 @@ pub fn kv_cache<const N: usize>(gguf: &GGufModel) -> Tensor<usize, N> {
     let nkvh = meta![gguf => llm_attention_head_count_kv; nh];
     let dh = meta![gguf => llm_rope_dimension_count; d / nh];
     Tensor::from_dim_slice(dt, [nctx, nblk, 2, nkvh, dh])
-}
-
-/// 构造 kv cache 张量
-pub fn sample_indices<'ctx, const N: usize>(
-    gguf: &GGufModel,
-    stream: &Stream<'ctx>,
-) -> Tensor<DevMem<'ctx>, N> {
-    type Op = operators::random_sample::cuda::Operator;
-    let nvoc = meta![gguf => tokenizer_ggml_tokens].len();
-    let Indices { n, mem } = Op::build_indices(nvoc, stream);
-    Tensor::from_dim_slice(types::U32, [n]).map(|_| mem)
 }
 
 /// 构造 sin cos 表张量

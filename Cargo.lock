@@ -20,7 +20,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 [[package]]
 name = "arg"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=06d4524#06d4524697785bafa9861c8e8ee90ad33479fb00"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=b1e201e#b1e201e3874e4d098254cbe125b1182fa82a4904"
 
 [[package]]
 name = "autocfg"
@@ -262,7 +262,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 [[package]]
 name = "exec"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=06d4524#06d4524697785bafa9861c8e8ee90ad33479fb00"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=b1e201e#b1e201e3874e4d098254cbe125b1182fa82a4904"
 dependencies = [
  "arg",
  "graph",
@@ -455,7 +455,7 @@ checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
 [[package]]
 name = "graph"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=06d4524#06d4524697785bafa9861c8e8ee90ad33479fb00"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=b1e201e#b1e201e3874e4d098254cbe125b1182fa82a4904"
 dependencies = [
  "bit-set",
 ]
@@ -603,12 +603,23 @@ dependencies = [
 [[package]]
 name = "mem"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=06d4524#06d4524697785bafa9861c8e8ee90ad33479fb00"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=b1e201e#b1e201e3874e4d098254cbe125b1182fa82a4904"
 dependencies = [
  "arg",
  "exec",
  "graph",
  "tensor",
+]
+
+[[package]]
+name = "mem-rearrange"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff2757f30b3eb45c3f99d3ee260c6b76041bf94ff3d152cf4dc2efd85908158f"
+dependencies = [
+ "itertools 0.14.0",
+ "ndarray-layout",
+ "rayon",
 ]
 
 [[package]]
@@ -653,13 +664,14 @@ checksum = "86a1db1a5ed8293057d401ebd96872cb881a3693d9b55379ae320f652aea3714"
 [[package]]
 name = "nn"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=06d4524#06d4524697785bafa9861c8e8ee90ad33479fb00"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=b1e201e#b1e201e3874e4d098254cbe125b1182fa82a4904"
 dependencies = [
  "arg",
  "digit-layout 0.3.0",
  "graph",
  "itertools 0.14.0",
  "mem",
+ "mem-rearrange",
 ]
 
 [[package]]

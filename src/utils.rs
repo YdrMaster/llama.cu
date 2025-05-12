@@ -2,7 +2,7 @@
 use ggus::ggml_quants::f16;
 use nn::Tensor;
 use operators::cuda::{CurrentCtx, DevByte, VirByte, memcpy_d2h};
-use std::{fmt, time::Instant};
+use std::fmt;
 use tensor::digit_layout::types;
 
 #[allow(unused)]
@@ -78,33 +78,5 @@ impl fmt::Display for DataFmt<u64> {
         } else {
             write!(f, "{:>6}", self.0)
         }
-    }
-}
-
-#[repr(transparent)]
-pub(super) struct Timer(Vec<(String, Instant)>);
-
-impl Timer {
-    pub fn new() -> Self {
-        Self(vec![(String::new(), Instant::now())])
-    }
-
-    pub fn push(&mut self, name: impl std::fmt::Display) {
-        self.0.push((name.to_string(), Instant::now()))
-    }
-}
-
-impl std::fmt::Display for Timer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let name_width = self.0.iter().map(|(name, _)| name.len()).max().unwrap_or(0) + 2;
-        for i in 1..self.0.len() {
-            writeln!(
-                f,
-                "{:·<name_width$}{:?}",
-                self.0[i].0,
-                self.0[i].1 - self.0[i - 1].1
-            )?
-        }
-        Ok(())
     }
 }
