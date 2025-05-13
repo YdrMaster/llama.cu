@@ -15,6 +15,7 @@ use gguf::{GGufModel, map_files};
 use ggus::{GGufMetaMapExt, ggml_quants::digit_layout::types};
 use handle::{Attention, Handle};
 use loader::WeightLoader;
+use macros::print_now;
 use memory::{AddrRegion, MemPages};
 use model::insert_sin_cos;
 use nn::{
@@ -38,7 +39,7 @@ use tokeneer::{Bpe, Tokeneer};
 
 fn main() {
     const NUM_DEV: usize = 4;
-    const STEPS: usize = 1000;
+    const MAX_STEPS: usize = 1000;
 
     let mut args = std::env::args();
     let _ = args.next();
@@ -91,34 +92,44 @@ fn main() {
             })
             .collect::<Vec<_>>();
 
-        print!("{prompt}");
-        std::io::stdout().flush().unwrap();
         let tokeneer = Bpe::from_gguf(&gguf);
         let receiver = receiver.unwrap();
         let tokens = tokeneer.encode(&prompt);
         for sender in &senders {
             sender.send(tokens.clone()).unwrap()
         }
-        let prefill = tokens.len();
-        let time = Instant::now();
-        for next in receiver.into_iter().take(STEPS) {
+        let send_all = move |next: u32| {
             for sender in &senders {
                 sender.send(vec![next]).unwrap()
             }
-            let piece = tokeneer.decode(&[next]);
-            print!("{piece}");
-            std::io::stdout().flush().unwrap();
+        };
+
+        let eos = meta![gguf => tokenizer_ggml_eos_token_id];
+        let prefill = tokens.len();
+        let mut steps = 1;
+        let next = receiver.recv().unwrap();
+        send_all(next);
+        print_now!("{prompt}{}", tokeneer.decode(&[next]));
+
+        let time = Instant::now();
+        for next in receiver.into_iter().take(MAX_STEPS) {
+            if next == eos {
+                break;
+            }
+            send_all(next);
+            steps += 1;
+            print_now!("{}", tokeneer.decode(&[next]))
         }
         let time = time.elapsed();
-        drop(senders);
+        drop(send_all);
         for thread in threads {
             thread.join().unwrap()
         }
-        let time = time.div_f32(STEPS as _);
+        let time = time.div_f32(steps as _);
         println!();
         println!();
         println!(
-            "prefill = {prefill} steps = {STEPS}, perf: {time:?}/tok, {}tok/s",
+            "prefill = {prefill} steps = {steps}, perf: {time:?}/tok, {}tok/s",
             Duration::from_secs(1).div_duration_f32(time),
         )
     })

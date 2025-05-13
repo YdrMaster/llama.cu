@@ -22,4 +22,13 @@ macro_rules! strides {
     };
 }
 
-pub(crate) use {destruct, dims, strides};
+macro_rules! print_now {
+    ($($arg:tt)*) => {{
+        use std::io::Write;
+
+        print!($($arg)*);
+        std::io::stdout().flush().unwrap();
+    }};
+}
+
+pub(crate) use {destruct, dims, print_now, strides};

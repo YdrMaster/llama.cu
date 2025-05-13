@@ -14,7 +14,7 @@ use operators::{
     attention_kv_cached::{Args as AttnArgs, cuda::Operator as Attn},
     cuda::{DevMem, HostMem, Stream, VirByte, memcpy_h2d},
     nccl::Communicator,
-    random_sample::{Args as SampleArgs, KVPair, cuda::Operator as Sample},
+    random_sample::{Args as SampleArgs, KVPair, SampleArgs as Config, cuda::Operator as Sample},
 };
 use std::iter::zip;
 use tensor::ndarray_layout::ArrayLayout;
@@ -182,8 +182,8 @@ impl<'ctx> ModelExec<'ctx> {
                     logits_base: offset_ptr(&logits).cast(),
                     indices: layout(indices),
                     indices_base: indices.get().as_ptr(),
-                    config: Default::default(),
-                    seed: 0.4,
+                    config: Config::new(1.2, 0.5, 1000).unwrap(),
+                    seed: rand::random(),
                 },
                 &mut [],
                 stream,

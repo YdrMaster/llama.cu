@@ -8,6 +8,7 @@ operators = { git = "https://github.com/YdrMaster/operators-rs", rev = "c4be5d0"
 tokeneer = { git = "https://github.com/InfiniTensor/tokeneer", rev = "12c2d99" }
 memmap2 = "0.9"
 regex = "1.11"
+rand = "0.9"
 nn = { git = "https://github.com/YdrMaster/InfiniNN", rev = "5b3a0f8" }
 graph = { git = "https://github.com/YdrMaster/InfiniNN", rev = "5b3a0f8" }
 ggus = { git = "https://github.com/InfiniTensor/gguf", rev = "23c362f" }
