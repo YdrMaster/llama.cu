@@ -1,4 +1,4 @@
-﻿use crate::blob::Blob;
+﻿use super::Blob;
 use ggus::ggml_quants::f16;
 use nn::Tensor;
 use operators::cuda::{CurrentCtx, DevByte, VirByte, memcpy_d2h};
@@ -6,7 +6,7 @@ use std::fmt;
 use tensor::digit_layout::types;
 
 #[allow(unused)]
-pub(super) fn fmt<const N: usize>(tensor: &Tensor<*const VirByte, N>, _ctx: &CurrentCtx) {
+pub(crate) fn fmt<const N: usize>(tensor: &Tensor<*const VirByte, N>, _ctx: &CurrentCtx) {
     let mem_range = tensor.layout().data_range();
     let ptr = tensor.get().cast::<DevByte>();
     let len = *mem_range.end() as usize + tensor.dt().nbytes();
@@ -16,7 +16,7 @@ pub(super) fn fmt<const N: usize>(tensor: &Tensor<*const VirByte, N>, _ctx: &Cur
     println!("{}", Fmt(tensor.as_ref().map(|_| host).as_deref()))
 }
 
-pub struct Fmt<'a, const N: usize>(Tensor<&'a [u8], N>);
+struct Fmt<'a, const N: usize>(Tensor<&'a [u8], N>);
 
 impl<const N: usize> fmt::Display for Fmt<'_, N> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

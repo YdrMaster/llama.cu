@@ -1,5 +1,5 @@
 ﻿use super::{Handle, Operator};
-use crate::macros::*;
+use crate::utils::destruct;
 use nn::Arg;
 use operators::{
     cuda::{Stream, VirByte},

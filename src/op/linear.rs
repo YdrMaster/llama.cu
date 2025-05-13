@@ -1,5 +1,5 @@
 ﻿use super::{Handle, Operator, add::Add};
-use crate::{macros::*, offset_ptr};
+use crate::utils::{destruct, dims, offset_ptr};
 use ggus::ggml_quants::f16;
 use nn::Arg;
 use operators::{

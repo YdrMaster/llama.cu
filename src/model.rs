@@ -1,7 +1,6 @@
 ﻿use crate::{
-    blob::{Blob, Data},
     gguf::GGufModel,
-    meta,
+    utils::{Blob, Data, meta},
 };
 use ggus::GGufMetaMapExt;
 use nn::Tensor;

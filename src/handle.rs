@@ -1,6 +1,6 @@
 ﻿use crate::{
-    macros::destruct,
     op::{self, ModuleKey, Operator},
+    utils::destruct,
 };
 use graph::Named;
 use nn::Tensor;

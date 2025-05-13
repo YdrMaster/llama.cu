@@ -1,4 +1,4 @@
-﻿use crate::blob::Data;
+﻿use crate::utils::Data;
 use ggus::{
     GENERAL_ALIGNMENT, GGuf, GGufError, GGufFileName, GGufMetaDataValueType, GGufMetaKV,
     GGufMetaMap,
@@ -108,38 +108,5 @@ impl<'a> GGufModel<'a> {
 impl GGufMetaMap for GGufModel<'_> {
     fn get(&self, key: &str) -> Option<(GGufMetaDataValueType, &[u8])> {
         self.meta_kvs.get(key).map(|kv| (kv.ty(), kv.value_bytes()))
-    }
-}
-
-mod macros {
-    #[macro_export]
-    macro_rules! meta {
-        ($gguf:expr => $key:ident) => {
-            $gguf.$key().unwrap()
-        };
-        ($gguf:expr => $key:ident; $default:expr) => {
-            match $gguf.$key() {
-                Ok(val) => val,
-                Err(ggus::GGufMetaError::NotExist) => $default,
-                Err(e) => panic!("failed to read meta: {e:?}"),
-            }
-        };
-
-        ($gguf:expr => (usize) $key:expr) => {
-            $gguf.get_usize($key).unwrap()
-        };
-        ($gguf:expr => (usize) $key:expr; $default:expr) => {
-            match $gguf.get_usize($key) {
-                Ok(val) => val,
-                Err(ggus::GGufMetaError::NotExist) => $default,
-                Err(e) => panic!("failed to read meta: {e:?}"),
-            }
-        };
-    }
-    #[macro_export]
-    macro_rules! tensor {
-        ($gguf:expr => $name:expr) => {
-            &$gguf.tensors[&*$name]
-        };
     }
 }
