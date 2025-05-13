@@ -31,11 +31,15 @@ use range_collector::RangeCollector;
 use std::{
     collections::HashSet,
     io::Write,
-    sync::mpsc::{Receiver, Sender, channel},
+    sync::mpsc::{Receiver, SendError, Sender, channel},
+    time::{Duration, Instant},
 };
 use tokeneer::{Bpe, Tokeneer};
 
 fn main() {
+    const NUM_DEV: usize = 2;
+    const STEPS: usize = 1000;
+
     let mut args = std::env::args();
     let _ = args.next();
     let path = args.next().unwrap();
@@ -51,10 +55,10 @@ fn main() {
 
     assert!(cuda::init().is_ok());
 
-    const N: usize = 2;
+    let devlist: [i32; NUM_DEV] = std::array::from_fn(|i| i as _);
     let mut senders = Vec::new();
     let mut receiver = None;
-    let comms = CommunicatorGroup::new(&[0, 1]);
+    let comms = CommunicatorGroup::new(&devlist);
     let channels = comms
         .into_vec()
         .into_iter()
@@ -76,13 +80,13 @@ fn main() {
         .collect::<Box<_>>();
 
     std::thread::scope(|s| {
-        let _threads = channels
+        let threads = channels
             .into_iter()
             .enumerate()
             .map(|(i, channel)| {
                 let llama = llama.clone();
                 let kv_cache = kv_cache.clone();
-                let dist = Distribution::new(i, 1, N);
+                let dist = Distribution::new(i, 1, NUM_DEV);
                 s.spawn(move || launch_partial(llama, dist, nvoc, &kv_cache, channel))
             })
             .collect::<Vec<_>>();
@@ -95,7 +99,9 @@ fn main() {
         for sender in &senders {
             sender.send(tokens.clone()).unwrap()
         }
-        for next in receiver {
+        let prefill = tokens.len();
+        let time = Instant::now();
+        for next in receiver.into_iter().take(STEPS) {
             for sender in &senders {
                 sender.send(vec![next]).unwrap()
             }
@@ -103,6 +109,18 @@ fn main() {
             print!("{piece}");
             std::io::stdout().flush().unwrap();
         }
+        let time = time.elapsed();
+        drop(senders);
+        for thread in threads {
+            thread.join().unwrap()
+        }
+        let time = time.div_f32(STEPS as _);
+        println!();
+        println!();
+        println!(
+            "prefill = {prefill} steps = {STEPS}, perf: {time:?}/tok, {}tok/s",
+            Duration::from_secs(1).div_duration_f32(time),
+        )
     })
 }
 
@@ -368,7 +386,9 @@ fn launch_partial(
             );
             pos += tokens.len();
             if let Some(next) = &next {
-                next.send(next_).unwrap()
+                if let Err(SendError(_)) = next.send(next_) {
+                    break;
+                }
             }
         }
     })
