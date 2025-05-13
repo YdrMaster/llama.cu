@@ -2,6 +2,7 @@
 mod all_reduce;
 mod embedding;
 mod linear;
+mod rearrange;
 mod rms_norm;
 mod rope;
 mod swiglu;
@@ -14,6 +15,7 @@ use tensor::digit_layout::{DigitLayout, types};
 pub use all_reduce::AllReduce;
 pub use embedding::Embedding;
 pub use linear::Linear;
+pub use rearrange::Rearrange;
 pub use rms_norm::RmsNorm;
 pub use rope::Rope;
 pub use swiglu::Swiglu;
