@@ -7,6 +7,7 @@ use nn::Tensor;
 use operators::{
     cublas::Cublas,
     cuda::{CurrentCtx, GraphExec, Module, Ptx, VirByte},
+    nccl::Communicator,
 };
 use regex::Regex;
 use std::{collections::HashMap, sync::LazyLock};
@@ -15,10 +16,11 @@ pub(crate) struct Handle<'ctx> {
     pub ctx: &'ctx CurrentCtx,
     pub cublas: Cublas<'ctx>,
     pub modules: HashMap<Box<[ModuleKey]>, Module<'ctx>>,
+    pub comm: Option<Communicator>,
 }
 
 pub(crate) enum Exec<'ctx> {
-    Graph(GraphExec<'ctx>),
+    Graph(GraphExec<'ctx>, Box<[Tensor<*const VirByte, 2>]>),
     Attention(Box<Attention>),
 }
 
@@ -36,6 +38,16 @@ impl<'ctx> Handle<'ctx> {
             ctx,
             cublas: Cublas::new(ctx),
             modules: HashMap::new(),
+            comm: None,
+        }
+    }
+
+    pub fn with_comm(ctx: &'ctx CurrentCtx, comm: Communicator) -> Self {
+        Self {
+            ctx,
+            cublas: Cublas::new(ctx),
+            modules: HashMap::new(),
+            comm: Some(comm),
         }
     }
 
@@ -77,13 +89,17 @@ impl<'ctx> Handle<'ctx> {
                 "linear" => add_to_graph!(Linear),
                 "rope" => add_to_graph!(Rope),
                 "swiglu" => add_to_graph!(Swiglu),
+                "all-reduce" => add_to_graph!(AllReduce),
                 "empty" => {}
                 "attention" => {
                     static REGEX: LazyLock<Regex> =
                         LazyLock::new(|| Regex::new(r"^Ω\.blk(\d+)\.attn:attention$").unwrap());
 
                     if let Some(stream) = stream.take() {
-                        exec_.push(Exec::Graph(self.ctx.instantiate(&stream.end())))
+                        exec_.push(Exec::Graph(
+                            self.ctx.instantiate(&stream.end()),
+                            Default::default(),
+                        ))
                     }
 
                     destruct!([q, k, v] = inputs);
@@ -127,7 +143,10 @@ impl<'ctx> Handle<'ctx> {
             }
         }
         if let Some(stream) = stream.take() {
-            exec_.push(Exec::Graph(self.ctx.instantiate(&stream.end())))
+            exec_.push(Exec::Graph(
+                self.ctx.instantiate(&stream.end()),
+                Default::default(),
+            ))
         }
         exec_.into()
     }

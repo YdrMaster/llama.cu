@@ -5,7 +5,7 @@
     layout,
     macros::*,
     memory::AddrRegion,
-    offset_ptr,
+    offset_ptr, utils,
 };
 use ggus::ggml_quants::f16;
 use nn::Tensor;
@@ -13,12 +13,14 @@ use operators::{
     Operator, TensorLayout,
     attention_kv_cached::{Args as AttnArgs, cuda::Operator as Attn},
     cuda::{DevMem, HostMem, Stream, VirByte, memcpy_h2d},
+    nccl::Communicator,
     random_sample::{Args as SampleArgs, KVPair, cuda::Operator as Sample},
 };
 use std::iter::zip;
 use tensor::ndarray_layout::ArrayLayout;
 
 pub struct ModelExec<'ctx> {
+    rank: usize,
     n_tok: usize,
     execs: Box<[Exec<'ctx>]>,
     workspace: AddrRegion,
@@ -70,12 +72,14 @@ impl<'ctx> ModelExec<'ctx> {
         pages.map(&mut workspace);
 
         // 构造 cuda graph
+        let rank = handle.comm.as_ref().map_or(0, Communicator::rank);
         let execs = handle.merge_cuda_graph(exec);
 
         // 解除映射回收物理页
         pages.unmap(&mut workspace);
 
         Self {
+            rank,
             n_tok,
             execs,
             workspace,
@@ -115,8 +119,16 @@ impl<'ctx> ModelExec<'ctx> {
 
         for exec in &self.execs {
             match exec {
-                Exec::Graph(graph) => {
+                Exec::Graph(graph, stub) => {
                     stream.launch_graph(graph);
+                    if !stub.is_empty() {
+                        if self.rank == 1 {
+                            for t in stub {
+                                utils::fmt(t, stream.ctx())
+                            }
+                            std::process::exit(0);
+                        }
+                    }
                 }
                 Exec::Attention(box_) => {
                     let Attention { iblk, q, k, v, o } = &**box_;

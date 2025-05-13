@@ -1,4 +1,5 @@
 ﻿mod add;
+mod all_reduce;
 mod embedding;
 mod linear;
 mod rms_norm;
@@ -10,6 +11,7 @@ use nn::Tensor;
 use operators::cuda::{Stream, VirByte};
 use tensor::digit_layout::{DigitLayout, types};
 
+pub use all_reduce::AllReduce;
 pub use embedding::Embedding;
 pub use linear::Linear;
 pub use rms_norm::RmsNorm;

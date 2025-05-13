@@ -20,7 +20,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 [[package]]
 name = "arg"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=b1e201e#b1e201e3874e4d098254cbe125b1182fa82a4904"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=5b3a0f8#5b3a0f8199349e55e2dce3db913c646f2333c6be"
 
 [[package]]
 name = "autocfg"
@@ -262,7 +262,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 [[package]]
 name = "exec"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=b1e201e#b1e201e3874e4d098254cbe125b1182fa82a4904"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=5b3a0f8#5b3a0f8199349e55e2dce3db913c646f2333c6be"
 dependencies = [
  "arg",
  "graph",
@@ -455,7 +455,7 @@ checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
 [[package]]
 name = "graph"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=b1e201e#b1e201e3874e4d098254cbe125b1182fa82a4904"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=5b3a0f8#5b3a0f8199349e55e2dce3db913c646f2333c6be"
 dependencies = [
  "bit-set",
 ]
@@ -603,7 +603,7 @@ dependencies = [
 [[package]]
 name = "mem"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=b1e201e#b1e201e3874e4d098254cbe125b1182fa82a4904"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=5b3a0f8#5b3a0f8199349e55e2dce3db913c646f2333c6be"
 dependencies = [
  "arg",
  "exec",
@@ -664,7 +664,7 @@ checksum = "86a1db1a5ed8293057d401ebd96872cb881a3693d9b55379ae320f652aea3714"
 [[package]]
 name = "nn"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=b1e201e#b1e201e3874e4d098254cbe125b1182fa82a4904"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=5b3a0f8#5b3a0f8199349e55e2dce3db913c646f2333c6be"
 dependencies = [
  "arg",
  "digit-layout 0.3.0",

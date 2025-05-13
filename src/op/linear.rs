@@ -81,6 +81,7 @@ impl Operator for Linear {
             }
         };
 
+        assert!(inputs.next().is_none());
         assert_eq!(w.dt(), dt);
         let layout = GemmLayout::new(
             &(dt, y.layout().clone()),

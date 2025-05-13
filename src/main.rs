@@ -24,6 +24,7 @@ use operators::{
     Operator, TensorLayout,
     attention_kv_cached::cuda::Operator as Attn,
     cuda::{self, DevMem, Device, Gpu, Stream, VirByte, VirMem},
+    nccl::{Communicator, CommunicatorGroup},
     random_sample::{Indices, KVPair, RandomSample, cuda::Operator as Sample},
 };
 use range_collector::RangeCollector;
@@ -48,27 +49,32 @@ fn main() {
     let kv_cache = model::kv_cache::<2>(&gguf);
     let llama = model::init(&gguf);
 
+    assert!(cuda::init().is_ok());
+
     const N: usize = 2;
     let mut senders = Vec::new();
     let mut receiver = None;
-    let channels = (0..N)
-        .map(|i| Channel {
+    let comms = CommunicatorGroup::new(&[0, 1]);
+    let channels = comms
+        .into_vec()
+        .into_iter()
+        .map(|comm| Channel {
             tokens: {
                 let (sender, receiver) = channel();
                 senders.push(sender);
                 receiver
             },
-            next: if i == 0 {
+            next: if comm.rank() == 0 {
                 let (sender, receiver_) = channel();
                 assert!(receiver.replace(receiver_).is_none());
                 Some(sender)
             } else {
                 None
             },
+            comm,
         })
         .collect::<Box<_>>();
 
-    assert!(cuda::init().is_ok());
     std::thread::scope(|s| {
         let _threads = channels
             .into_iter()
@@ -90,12 +96,12 @@ fn main() {
             sender.send(tokens.clone()).unwrap()
         }
         for next in receiver {
-            let piece = tokeneer.decode(&[next]);
-            print!("{piece}");
-            std::io::stdout().flush().unwrap();
             for sender in &senders {
                 sender.send(vec![next]).unwrap()
             }
+            let piece = tokeneer.decode(&[next]);
+            print!("{piece}");
+            std::io::stdout().flush().unwrap();
         }
     })
 }
@@ -126,29 +132,35 @@ impl KVCache {
 }
 
 struct Channel {
+    pub comm: Communicator,
     pub tokens: Receiver<Vec<u32>>,
     pub next: Option<Sender<u32>>,
 }
 
+fn builder() -> GraphBuilder {
+    let mut ans = GraphBuilder::default();
+    ans.register_op("embedding", nn_op::embedding::Embedding)
+        .register_op("rms-norm", nn_op::normalization::RmsNorm)
+        .register_op("linear", nn_op::linear::Linear)
+        .register_op("rope", nn_op::rope::Rope)
+        .register_op("attention", nn_op::attention::Attention)
+        .register_op("swiglu", nn_op::activation::SwiGLU)
+        .register_op("concat", nn_op::concat::Concat)
+        .register_op("split", nn_op::split::Split);
+    ans
+}
+
 /// 单卡启动
+#[allow(unused)]
 fn launc_mono(
     llama: LLaMA<Tensor<&[u8], 2>>,
+    dev: Device,
     nvoc: usize,
     tokeneer: &Tokeneer<Bpe>,
     template: &Tensor<usize, 2>,
     prompt: &str,
 ) {
-    let nn::Graph(graph::Graph { topo, nodes, edges }) = GraphBuilder::default()
-        .register_op("embedding", nn_op::embedding::Embedding)
-        .register_op("rms-norm", nn_op::normalization::RmsNorm)
-        .register_op("layer-norm", nn_op::normalization::LayerNorm)
-        .register_op("attention", nn_op::attention::Attention)
-        .register_op("split", nn_op::split::Split)
-        .register_op("swiglu", nn_op::activation::SwiGLU)
-        .register_op("gelu", nn_op::activation::GeLU)
-        .register_op("linear", nn_op::linear::Linear)
-        .register_op("rope", nn_op::rope::Rope)
-        .register_op("concat", nn_op::concat::Concat)
+    let nn::Graph(graph::Graph { topo, nodes, edges }) = builder()
         .build(
             llama,
             [
@@ -166,7 +178,6 @@ fn launc_mono(
         }
     }
     // 权重加载
-    let dev = Device::new(0);
     let mut pages = MemPages::new(&dev);
     let page_size = pages.page_size();
     let mut weight = VirMem::new(ranges.size().div_ceil(page_size) * page_size, 0).map_on(&dev);
@@ -251,17 +262,8 @@ fn launch_partial(
     channel: Channel,
 ) {
     // 构造图表示
-    let nn::Graph(graph::Graph { topo, nodes, edges }) = GraphBuilder::default()
-        .register_op("embedding", nn_op::embedding::Embedding)
-        .register_op("rms-norm", nn_op::normalization::RmsNorm)
-        .register_op("layer-norm", nn_op::normalization::LayerNorm)
-        .register_op("attention", nn_op::attention::Attention)
-        .register_op("split", nn_op::split::Split)
-        .register_op("swiglu", nn_op::activation::SwiGLU)
-        .register_op("gelu", nn_op::activation::GeLU)
-        .register_op("linear", nn_op::linear::Linear)
-        .register_op("rope", nn_op::rope::Rope)
-        .register_op("concat", nn_op::concat::Concat)
+    let nn::Graph(graph::Graph { topo, nodes, edges }) = builder()
+        .register_op("all-reduce", nn_op::all_reduce::AllReduce)
         .build(
             llama.tensor_parallel(dist),
             [
@@ -284,7 +286,8 @@ fn launch_partial(
         }
     }
     // 权重加载
-    let dev = Device::new(0);
+    let Channel { comm, tokens, next } = channel;
+    let dev = comm.device();
     let mut pages = MemPages::new(&dev);
     let page_size = pages.page_size();
     let mut weight = VirMem::new(ranges.size().div_ceil(page_size) * page_size, 0).map_on(&dev);
@@ -333,7 +336,7 @@ fn launch_partial(
     let kv_cache = KVCache::new(template, dist, &mut pages);
     // 推理
     let graph = nn::Graph(graph::Graph { topo, nodes, edges });
-    let gpu = Gpu::new(dev.context(), Default::default());
+    let gpu = Gpu::new(dev.retain_primary(), Default::default());
     let attn = Attn::new(&gpu);
     let sample = Sample::new(&gpu);
     gpu.apply(|ctx| {
@@ -345,13 +348,12 @@ fn launch_partial(
             kv_pair_host: ctx.malloc_host::<u8>(size_of::<KVPair<()>>()),
         };
 
-        let mut handle = Handle::new(ctx);
+        let mut handle = Handle::with_comm(ctx, comm);
 
         let mut models = (0..=6)
             .map(|i| ModelExec::new(&mut handle, graph.clone(), 1 << i, 1, &mut pages))
             .collect::<Box<_>>();
 
-        let Channel { tokens, next } = channel;
         let mut pos = 0;
         for tokens in tokens {
             let model_idx = tokens.len().next_power_of_two().trailing_zeros() as usize;
