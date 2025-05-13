@@ -1,7 +1,12 @@
 ﻿use operators::cuda::{Device, MappedMem, MemProp, PhyMem, VirByte, VirMem};
-use std::{ops::Deref, ptr::dangling, sync::Arc};
+use std::{
+    ops::Deref,
+    ptr::dangling,
+    sync::{Arc, LazyLock},
+};
 
 pub(super) struct MemPages {
+    base: usize,
     prop: MemProp,
     size: usize,
     pool: Vec<Arc<PhyMem>>,
@@ -9,10 +14,21 @@ pub(super) struct MemPages {
 
 impl MemPages {
     pub fn new(dev: &Device) -> Self {
+        static BASE: LazyLock<usize> = LazyLock::new(|| {
+            let base = VirMem::new(1 << 30, 0).as_ptr() as usize;
+            let step = 1 << 44;
+            (base + step - 1) & !(step - 1)
+        });
+        let base = *BASE + dev.index() as usize * (1 << 40);
         let prop = dev.mem_prop();
         let size = prop.granularity_minimum();
         let pool = Vec::new();
-        Self { prop, size, pool }
+        Self {
+            base,
+            prop,
+            size,
+            pool,
+        }
     }
 
     pub const fn page_size(&self) -> usize {
@@ -26,7 +42,7 @@ impl MemPages {
         }
 
         let mut ans = Vec::with_capacity(n_pages);
-        let first = VirMem::new(self.size, 0);
+        let first = VirMem::new(self.size, self.base);
         let mut end = first.as_ptr_range().end;
         ans.push(first);
         while ans.len() < n_pages {

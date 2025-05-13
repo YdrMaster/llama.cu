@@ -37,7 +37,7 @@ use std::{
 use tokeneer::{Bpe, Tokeneer};
 
 fn main() {
-    const NUM_DEV: usize = 2;
+    const NUM_DEV: usize = 4;
     const STEPS: usize = 1000;
 
     let mut args = std::env::args();
@@ -50,7 +50,7 @@ fn main() {
     let mut gguf = GGufModel::read(maps.iter().map(|x| &**x));
     insert_sin_cos(&mut gguf);
     let nvoc = meta![gguf => tokenizer_ggml_tokens].len();
-    let kv_cache = model::kv_cache::<2>(&gguf);
+    let kv_cache = model::kv_cache::<2>(&gguf, 1024);
     let llama = model::init(&gguf);
 
     assert!(cuda::init().is_ok());
@@ -267,7 +267,7 @@ fn launc_mono(
             print!("{}", tokeneer.decode(&[next]));
             std::io::stdout().flush().unwrap();
             pos += tokens.len();
-            tokens = vec![next];
+            tokens = vec![next]
         }
     })
 }
@@ -368,7 +368,7 @@ fn launch_partial(
 
         let mut handle = Handle::with_comm(ctx, comm);
 
-        let mut models = (0..=6)
+        let mut models = (0..=5)
             .map(|i| ModelExec::new(&mut handle, graph.clone(), 1 << i, 1, &mut pages))
             .collect::<Box<_>>();
 
