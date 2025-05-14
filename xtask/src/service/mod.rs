@@ -20,12 +20,9 @@ use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::PathBuf,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
-use tokio::{
-    net::TcpListener,
-    sync::{Mutex, mpsc},
-};
+use tokio::{net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 #[derive(Args)]
@@ -41,12 +38,10 @@ impl ServiceArgs {
         let Self { base, port } = self;
         let gpus = base.gpus();
         let max_steps = base.max_steps();
-        // 启动 tokio 运行时
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime
+        tokio::runtime::Runtime::new()
+            .unwrap()
             .block_on(start_infer_service(base.model, port, gpus, max_steps))
-            .unwrap();
-        runtime.shutdown_background();
+            .unwrap()
     }
 }
 
@@ -95,8 +90,8 @@ impl HyperService<Request<Incoming>> for App {
                 Ok(match req {
                     Ok(Infer { prompt }) => {
                         let (sender, receiver) = mpsc::unbounded_channel();
-                        tokio::spawn(async move {
-                            let mut session = session.lock().await;
+                        tokio::task::spawn_blocking(move || {
+                            let mut session = session.lock().unwrap();
                             let busy_session = session.send(prompt, true);
                             while let Some(response) = busy_session.receive() {
                                 if sender.send(response).is_err() {
@@ -124,48 +119,50 @@ impl HyperService<Request<Incoming>> for App {
     }
 }
 
-#[cfg(test)]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_service() {
-    use hyper::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
-    use std::{collections::HashMap, env::var_os};
-    use tokio::time::Duration;
+#[test]
+fn test_post() {
+    use crate::macros::print_now;
+    use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
     use tokio_stream::StreamExt;
 
-    let Some(path) = var_os("TEST_MODEL") else {
+    let Some(path) = std::env::var_os("TEST_MODEL") else {
         println!("TEST_MODE not set");
         return;
     };
     const PORT: u16 = 27000;
 
-    let _handle = tokio::spawn(start_infer_service(path.into(), PORT, [0].into(), 100));
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(async move {
+            let client = reqwest::Client::new();
 
-    {
-        let client = reqwest::Client::new();
+            let _handle = tokio::spawn(start_infer_service(path.into(), PORT, [0].into(), 256));
 
-        let mut map_outter = HashMap::new();
-        map_outter.insert("prompt", String::from("Once upon a time,"));
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        let req = client
-            .post(format!("http://localhost:{PORT}/infer"))
-            .headers(headers)
-            .json(&map_outter);
+            let mut headers = HeaderMap::new();
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+            let req = client
+                .post(format!("http://localhost:{PORT}/infer"))
+                .headers(headers)
+                .body(
+                    serde_json::to_string(&Infer {
+                        prompt: "Once upon a time,".into(),
+                    })
+                    .unwrap(),
+                );
 
-        for i in 0..15 {
-            let res = req.try_clone().unwrap().send().await.unwrap();
+            let res = req.send().await.unwrap();
             if res.status().is_success() {
                 let mut stream = res.bytes_stream();
                 while let Some(item) = stream.next().await {
-                    let bytes_slice: &[u8] = &item.unwrap();
-                    let get_str = String::from_utf8_lossy(bytes_slice);
-                    println!("receive : {get_str}");
+                    let text = item.unwrap();
+                    let text = std::str::from_utf8(&text).unwrap();
+                    print_now!("{text}")
                 }
-                break;
             } else {
-                println!("number {i} failed : {:?}", res.status());
+                println!("{res:?}");
+                let text = res.bytes().await.unwrap();
+                let text = std::str::from_utf8(&text).unwrap();
+                println!("body: {text}")
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    }
+        })
 }

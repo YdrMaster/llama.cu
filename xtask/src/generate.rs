@@ -1,4 +1,4 @@
-﻿use crate::BaseArgs;
+﻿use crate::{BaseArgs, macros::print_now};
 use llama_cu::Session;
 
 #[derive(Args)]
@@ -9,15 +9,6 @@ pub struct GenerateArgs {
     prompt: Option<String>,
     #[clap(short = 't', long)]
     use_template: bool,
-}
-
-macro_rules! print_now {
-    ($($arg:tt)*) => {{
-        use std::io::Write;
-
-        print!($($arg)*);
-        std::io::stdout().flush().unwrap();
-    }};
 }
 
 impl GenerateArgs {

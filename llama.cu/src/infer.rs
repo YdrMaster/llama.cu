@@ -380,7 +380,7 @@ fn service(
     let chat_template = gguf.chat_template(&tokeneer);
     let eos = meta![gguf => tokenizer_ggml_eos_token_id];
     let mut duration = Duration::ZERO;
-    let mut steps = 1;
+    let mut n_decode = 1;
 
     let send_all = move |next: SmallVec<[utok; 1]>| {
         for sender in &senders {
@@ -426,7 +426,7 @@ fn service(
             }
             send_all(smallvec![next]);
             time = Instant::now();
-            steps += 1;
+            n_decode += 1;
             // 会话拒绝输出
             if let Err(SendError(_)) = response.send(tokeneer.decode(&[next])) {
                 break;
@@ -434,5 +434,5 @@ fn service(
         }
     }
 
-    (duration, steps)
+    (duration, n_decode)
 }

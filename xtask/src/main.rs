@@ -59,10 +59,23 @@ impl BaseArgs {
                     .map(|c| c.as_str().parse().unwrap())
                     .collect()
             })
-            .unwrap_or_else(|| vec![1].into())
+            .unwrap_or_else(|| [0].into())
     }
 
     fn max_steps(&self) -> usize {
         self.max_steps.unwrap_or(1000)
     }
+}
+
+mod macros {
+    macro_rules! print_now {
+        ($($arg:tt)*) => {{
+            use std::io::Write;
+
+            print!($($arg)*);
+            std::io::stdout().flush().unwrap();
+        }};
+    }
+
+    pub(crate) use print_now;
 }
