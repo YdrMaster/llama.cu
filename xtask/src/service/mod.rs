@@ -96,7 +96,7 @@ impl HyperService<Request<Incoming>> for App {
                         let (sender, receiver) = mpsc::unbounded_channel();
                         tokio::spawn(async move {
                             let mut session = session.lock().await;
-                            let busy_session = session.send(prompt);
+                            let busy_session = session.send(prompt, true);
                             while let Some(response) = busy_session.receive() {
                                 sender.send(response).unwrap()
                             }

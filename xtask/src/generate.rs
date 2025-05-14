@@ -7,6 +7,8 @@ pub struct GenerateArgs {
     base: BaseArgs,
     #[clap(short, long)]
     prompt: Option<String>,
+    #[clap(short = 't', long)]
+    use_template: bool,
 }
 
 macro_rules! print_now {
@@ -20,12 +22,16 @@ macro_rules! print_now {
 
 impl GenerateArgs {
     pub fn generate(self) {
-        let Self { base, prompt } = self;
+        let Self {
+            base,
+            prompt,
+            use_template,
+        } = self;
         let gpus = base.gpus();
         let max_steps = base.max_steps();
         let prompt = prompt.unwrap_or("Once upon a time,".into());
         let (mut session, _handle) = Session::new(base.model, gpus, max_steps);
-        let busy = session.send(prompt.clone());
+        let busy = session.send(prompt.clone(), use_template);
         let first = busy.receive().unwrap();
         print_now!("{prompt}{first}");
         while let Some(text) = busy.receive() {

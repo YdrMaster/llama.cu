@@ -1,4 +1,6 @@
 ﻿use crate::{
+    Task,
+    chat_template::Message,
     exec::{ModelExec, OutputHead},
     gguf::{GGufModel, map_files},
     handle::Handle,
@@ -26,7 +28,7 @@ use std::{
     sync::mpsc::{self, Receiver, SendError, Sender},
     time::{Duration, Instant},
 };
-use tokeneer::{Bpe, Tokeneer};
+use tokeneer::Bpe;
 
 #[allow(non_camel_case_types)]
 type utok = u32;
@@ -35,7 +37,7 @@ pub fn infer(
     model: impl AsRef<Path>,
     gpus: &[c_int],
     max_steps: usize,
-    requests: Receiver<String>,
+    requests: Receiver<Task>,
     session: Sender<Receiver<String>>,
 ) -> (Duration, usize) {
     // 从文件加载权重
@@ -44,9 +46,7 @@ pub fn infer(
     insert_sin_cos(&mut gguf);
     // 调取重要配置
     let nvoc = meta![gguf => tokenizer_ggml_tokens].len();
-    let eos = meta![gguf => tokenizer_ggml_eos_token_id];
     let llama = model::init(&gguf);
-    let tokeneer = Bpe::from_gguf(&gguf);
     let kv_cache = model::kv_cache(&gguf);
 
     assert!(cuda::init().is_ok());
@@ -69,9 +69,8 @@ pub fn infer(
                     session,
                     [sender].into(),
                     receiver,
-                    tokeneer,
+                    &gguf,
                     max_steps,
-                    eos,
                 )
             })
         }
@@ -113,9 +112,8 @@ pub fn infer(
                     session,
                     senders.into(),
                     receiver,
-                    tokeneer,
+                    &gguf,
                     max_steps,
-                    eos,
                 )
             })
         }
@@ -366,14 +364,16 @@ fn launch_partial(
 }
 
 fn service(
-    requests: Receiver<String>,
+    requests: Receiver<Task>,
     session: Sender<Receiver<String>>,
     senders: Box<[Sender<SmallVec<[utok; 1]>>]>,
     receiver: Receiver<utok>,
-    tokeneer: Tokeneer<Bpe>,
+    gguf: &GGufModel,
     max_steps: usize,
-    eos: utok,
 ) -> (Duration, usize) {
+    let tokeneer = Bpe::from_gguf(gguf);
+    let chat_template = gguf.chat_template(&tokeneer);
+    let eos = meta![gguf => tokenizer_ggml_eos_token_id];
     let mut duration = Duration::ZERO;
     let mut steps = 1;
 
@@ -383,7 +383,24 @@ fn service(
         }
     };
 
-    for prompt in requests {
+    for Task {
+        mut prompt,
+        use_template,
+    } in requests
+    {
+        if use_template {
+            if let Some(chat_template) = &chat_template {
+                prompt = chat_template
+                    .render(
+                        &[Message {
+                            role: "user",
+                            content: &prompt,
+                        }],
+                        true,
+                    )
+                    .unwrap()
+            }
+        }
         // 回复接收通道
         let (response, busy_session) = mpsc::channel();
         session.send(busy_session).unwrap();

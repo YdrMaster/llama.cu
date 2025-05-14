@@ -1,9 +1,9 @@
-mod dialog;
+mod chat;
 mod generate;
 mod service;
 
+use chat::ChatArgs;
 use clap::Parser;
-use dialog::DialogArgs;
 use generate::GenerateArgs;
 use regex::Regex;
 use service::ServiceArgs;
@@ -16,7 +16,7 @@ fn main() {
     use Commands::*;
     match Cli::parse().command {
         Generate(args) => args.generate(),
-        Dialog(args) => args.dialog(),
+        Chat(args) => args.dialog(),
         Service(args) => args.service(),
     }
 }
@@ -34,7 +34,7 @@ enum Commands {
     /// 文本生成
     Generate(GenerateArgs),
     /// 命令行对话
-    Dialog(DialogArgs),
+    Chat(ChatArgs),
     /// web 服务
     Service(ServiceArgs),
 }

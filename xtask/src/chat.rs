@@ -2,7 +2,7 @@
 use llama_cu::Session;
 
 #[derive(Args)]
-pub struct DialogArgs {
+pub struct ChatArgs {
     #[clap(flatten)]
     base: BaseArgs,
 }
@@ -16,7 +16,7 @@ macro_rules! print_now {
     }};
 }
 
-impl DialogArgs {
+impl ChatArgs {
     pub fn dialog(self) {
         let Self { base } = self;
         let gpus = base.gpus();
@@ -32,7 +32,7 @@ impl DialogArgs {
                 assert_eq!(line.pop(), Some('\n'));
             }
 
-            let busy = session.send(line.clone());
+            let busy = session.send(line.clone(), true);
             let first = busy.receive().unwrap();
             print_now!("assistant> {first}");
             while let Some(text) = busy.receive() {

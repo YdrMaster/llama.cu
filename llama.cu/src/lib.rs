@@ -1,3 +1,4 @@
+mod chat_template;
 mod exec;
 mod gguf;
 mod handle;
@@ -17,8 +18,13 @@ use std::{
 };
 
 pub struct Session {
-    user: Sender<String>,
+    user: Sender<Task>,
     assistant: Receiver<Receiver<String>>,
+}
+
+struct Task {
+    prompt: String,
+    use_template: bool,
 }
 
 #[repr(transparent)]
@@ -36,8 +42,13 @@ impl Session {
         (Self { user, assistant }, Handle(Some(thread)))
     }
 
-    pub fn send(&mut self, prompt: String) -> BusySession {
-        self.user.send(prompt).unwrap();
+    pub fn send(&mut self, prompt: String, use_template: bool) -> BusySession {
+        self.user
+            .send(Task {
+                prompt,
+                use_template,
+            })
+            .unwrap();
         BusySession(self.assistant.recv().unwrap(), PhantomData)
     }
 }
