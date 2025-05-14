@@ -1,6 +1,8 @@
+mod dialog;
 mod generate;
 
 use clap::Parser;
+use dialog::DialogArgs;
 use generate::GenerateArgs;
 
 #[macro_use]
@@ -10,6 +12,7 @@ fn main() {
     use Commands::*;
     match Cli::parse().command {
         Generate(args) => args.generate(),
+        Dialog(args) => args.dialog(),
     }
 }
 
@@ -25,4 +28,6 @@ struct Cli {
 enum Commands {
     /// 文本生成
     Generate(GenerateArgs),
+    /// 命令行对话
+    Dialog(DialogArgs),
 }
