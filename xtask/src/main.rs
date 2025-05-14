@@ -1,9 +1,11 @@
 mod dialog;
 mod generate;
+mod service;
 
 use clap::Parser;
 use dialog::DialogArgs;
 use generate::GenerateArgs;
+use service::ServiceArgs;
 
 #[macro_use]
 extern crate clap;
@@ -13,6 +15,7 @@ fn main() {
     match Cli::parse().command {
         Generate(args) => args.generate(),
         Dialog(args) => args.dialog(),
+        Service(args) => args.service(),
     }
 }
 
@@ -30,4 +33,5 @@ enum Commands {
     Generate(GenerateArgs),
     /// 命令行对话
     Dialog(DialogArgs),
+    Service(ServiceArgs),
 }

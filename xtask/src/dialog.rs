@@ -6,9 +6,9 @@ use std::{path::PathBuf, sync::LazyLock};
 pub struct DialogArgs {
     model: PathBuf,
     #[clap(long)]
-    max_steps: Option<usize>,
-    #[clap(long)]
     gpus: Option<String>,
+    #[clap(long)]
+    max_steps: Option<usize>,
 }
 
 macro_rules! print_now {
