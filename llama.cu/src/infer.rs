@@ -10,14 +10,11 @@
     utils::{RangeCollector, meta},
 };
 use ggus::{GGufMetaMapExt, ggml_quants::digit_layout::types};
-use nn::{
-    Dim, Distribution, GraphBuilder, LLaMA, TPAction, TPTensor, Tensor, TensorMeta, op as nn_op,
-};
+use nn::{Dim, Distribution, GraphBuilder, LLaMA, Tensor, TensorMeta, op as nn_op};
 use operators::{
     Operator,
     attention_kv_cached::cuda::Operator as Attn,
     cuda::{self, Device, Gpu},
-    nccl::{Communicator, CommunicatorGroup},
     random_sample::{SampleArgs, cuda::Operator as Sample},
 };
 use smallvec::{SmallVec, smallvec};
@@ -29,6 +26,12 @@ use std::{
     time::{Duration, Instant},
 };
 use tokeneer::{Bpe, utok};
+
+#[cfg(nccl)]
+use {
+    nn::{TPAction, TPTensor},
+    operators::nccl::{Communicator, CommunicatorGroup},
+};
 
 pub fn infer(
     model: impl AsRef<Path>,
@@ -71,6 +74,9 @@ pub fn infer(
                 )
             })
         }
+        #[cfg(not(nccl))]
+        [..] => panic!("nccl not found"),
+        #[cfg(nccl)]
         gpus => {
             let mut senders = Vec::new();
             let comms = CommunicatorGroup::new(gpus);
@@ -123,6 +129,7 @@ struct MonoChannel {
     next: Sender<utok>,
 }
 
+#[cfg(nccl)]
 struct Channel {
     comm: Communicator,
     tokens: Receiver<SmallVec<[utok; 1]>>,
@@ -240,6 +247,7 @@ fn launc_mono(
     })
 }
 
+#[cfg(nccl)]
 fn launch_partial(
     llama: LLaMA<Tensor<&[u8], 2>>,
     dist: Distribution,

@@ -24,4 +24,5 @@ ggus = { git = "https://github.com/InfiniTensor/gguf", rev = "23c362f" }
 tensor = { git = "https://github.com/YdrMaster/tensor", rev = "66450a9" }
 
 [build-dependencies]
+build-script-cfg = "0.1"
 search-cuda-tools = { git = "https://github.com/YdrMaster/cuda-driver", rev = "f3ffbcc" }

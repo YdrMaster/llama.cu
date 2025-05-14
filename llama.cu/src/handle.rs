@@ -7,15 +7,18 @@ use nn::Tensor;
 use operators::{
     cublas::Cublas,
     cuda::{CurrentCtx, GraphExec, Module, Ptx, VirByte},
-    nccl::Communicator,
 };
 use regex::Regex;
 use std::{collections::HashMap, sync::LazyLock};
+
+#[cfg(nccl)]
+use operators::nccl::Communicator;
 
 pub(crate) struct Handle<'ctx> {
     pub ctx: &'ctx CurrentCtx,
     pub cublas: Cublas<'ctx>,
     pub modules: HashMap<Box<[ModuleKey]>, Module<'ctx>>,
+    #[cfg(nccl)]
     pub comm: Option<Communicator>,
 }
 
@@ -38,10 +41,12 @@ impl<'ctx> Handle<'ctx> {
             ctx,
             cublas: Cublas::new(ctx),
             modules: HashMap::new(),
+            #[cfg(nccl)]
             comm: None,
         }
     }
 
+    #[cfg(nccl)]
     pub fn with_comm(ctx: &'ctx CurrentCtx, comm: Communicator) -> Self {
         Self {
             ctx,
@@ -89,6 +94,7 @@ impl<'ctx> Handle<'ctx> {
                 "linear" => add_to_graph!(Linear),
                 "rope" => add_to_graph!(Rope),
                 "swiglu" => add_to_graph!(Swiglu),
+                #[cfg(nccl)]
                 "all-reduce" => add_to_graph!(AllReduce),
                 "empty" => {}
                 "attention" => {

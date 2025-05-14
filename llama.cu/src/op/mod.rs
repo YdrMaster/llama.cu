@@ -1,4 +1,5 @@
 ﻿mod add;
+#[cfg(nccl)]
 mod all_reduce;
 mod embedding;
 mod linear;
@@ -11,6 +12,7 @@ use nn::Tensor;
 use operators::cuda::{Stream, VirByte};
 use tensor::digit_layout::{DigitLayout, types};
 
+#[cfg(nccl)]
 pub use all_reduce::AllReduce;
 pub use embedding::Embedding;
 pub use linear::Linear;

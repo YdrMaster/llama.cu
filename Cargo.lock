@@ -629,6 +629,7 @@ dependencies = [
 name = "llama-cu"
 version = "0.0.0"
 dependencies = [
+ "build-script-cfg 0.1.0",
  "ggus",
  "graph",
  "memmap2",
