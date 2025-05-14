@@ -99,9 +99,10 @@ impl HyperService<Request<Incoming>> for App {
                             let mut session = session.lock().await;
                             let busy_session = session.send(prompt, true);
                             while let Some(response) = busy_session.receive() {
-                                sender.send(response).unwrap()
+                                if sender.send(response).is_err() {
+                                    break;
+                                }
                             }
-                            sender.closed().await
                         });
                         text_stream(UnboundedReceiverStream::new(receiver))
                     }
@@ -119,6 +120,59 @@ impl HyperService<Request<Incoming>> for App {
                     )
                     .unwrap())
             }),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_service() {
+    use hyper::header::CONTENT_TYPE;
+    use hyper::header::{HeaderMap, HeaderValue};
+    use std::collections::HashMap;
+    use std::env::var_os;
+    use tokio::time::Duration;
+    use tokio_stream::StreamExt;
+    let Some(path) = var_os("TEST_MODEL") else {
+        println!("TEST_MODE not set");
+        return;
+    };
+    const PORT: u16 = 27000;
+    let gpus: Box<[c_int]> = vec![0].into();
+    const MAX_STEPS: usize = 100;
+
+    let _handle = tokio::spawn(start_infer_service(
+        PathBuf::from(path),
+        PORT,
+        gpus,
+        MAX_STEPS,
+    ));
+
+    {
+        let client = reqwest::Client::new();
+
+        let mut map_outter = HashMap::new();
+        map_outter.insert("prompt", String::from("Once upon a time,"));
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let req = client
+            .post(format!("http://127.0.0.1:{}/infer", PORT))
+            .headers(headers)
+            .json(&map_outter);
+
+        for i in 0..15 {
+            let res = req.try_clone().unwrap().send().await.unwrap();
+            if res.status().is_success() {
+                let mut stream = res.bytes_stream();
+                while let Some(item) = stream.next().await {
+                    let bytes_slice: &[u8] = &item.unwrap();
+                    let get_str = String::from_utf8_lossy(bytes_slice);
+                    println!("receive : {get_str}");
+                }
+                break;
+            } else {
+                println!("number {i} failed : {:?}", res.status());
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
 }
