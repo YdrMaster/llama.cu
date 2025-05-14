@@ -3,7 +3,7 @@
     gguf::{GGufModel, map_files},
     handle::Handle,
     loader::WeightLoader,
-    memory::{AddrRegion, MemPages},
+    memory::{KVCache, MemPages},
     model::{self, insert_sin_cos},
     utils::{RangeCollector, meta},
 };
@@ -14,7 +14,7 @@ use nn::{
 use operators::{
     Operator,
     attention_kv_cached::cuda::Operator as Attn,
-    cuda::{self, Device, Gpu, VirByte, VirMem},
+    cuda::{self, Device, Gpu, VirMem},
     nccl::{Communicator, CommunicatorGroup},
     random_sample::{SampleArgs, cuda::Operator as Sample},
 };
@@ -47,7 +47,7 @@ pub fn infer(
     let eos = meta![gguf => tokenizer_ggml_eos_token_id];
     let llama = model::init(&gguf);
     let tokeneer = Bpe::from_gguf(&gguf);
-    let kv_cache = model::kv_cache(&gguf, 1024);
+    let kv_cache = model::kv_cache(&gguf);
 
     assert!(cuda::init().is_ok());
     let (next, receiver) = mpsc::channel();
@@ -118,31 +118,6 @@ pub fn infer(
                     eos,
                 )
             })
-        }
-    }
-}
-
-struct KVCache {
-    tensor_vir: Tensor<*const VirByte, 2>,
-    mem_region: AddrRegion,
-}
-
-impl KVCache {
-    pub fn new(template: &Tensor<usize, 2>, dist: Distribution, pages: &mut MemPages) -> Self {
-        let mut shape = template.shape().to_vec();
-        shape[3] = shape[3] / dist.total * dist.len;
-        let template = Tensor::from_dim_slice(template.dt(), &shape);
-
-        let _each = template.get() / template.shape()[0]; // kv cache 每个 token 的尺寸
-        let mut mem_region = pages.reserve_vir(*template.get()); // 为 kv cache 分配虚页
-        let tensor_vir = template
-            .map(|_| mem_region.as_ptr()) // 存入张量
-            .transform(|layout| layout.transpose(&[3, 1, 2, 0])); // 转置 [nkvh, nblk, 2, nctx, dh]
-        pages.map(&mut mem_region);
-
-        Self {
-            tensor_vir,
-            mem_region,
         }
     }
 }
@@ -232,7 +207,7 @@ fn launc_mono(
             .collect::<Box<_>>()
     });
     // 创建 kv cache
-    let kv_cache = KVCache::new(template, Distribution::MONO, &mut pages);
+    let mut kv_cache = KVCache::new(template, Distribution::MONO, &mut pages);
     // 推理
     let graph = nn::Graph(graph::Graph { topo, nodes, edges });
     let gpu = Gpu::new(dev.context(), Default::default());
@@ -248,11 +223,14 @@ fn launc_mono(
         let mut output_head = OutputHead::new(sample, ctx, nvoc);
         let mut pos = 0;
         for tokens in tokens {
-            let model_idx = tokens.len().next_power_of_two().trailing_zeros() as usize;
+            let to_cache = tokens.len().next_power_of_two();
+            kv_cache.prepare(pos + to_cache, &mut pages);
+
+            let model_idx = to_cache.trailing_zeros() as usize;
             let next_ = models[model_idx].launch(
                 &tokens,
                 pos,
-                &kv_cache.tensor_vir,
+                kv_cache.as_tensor(),
                 &mut pages,
                 &attn,
                 &mut output_head,
@@ -347,7 +325,7 @@ fn launch_partial(
             .collect::<Box<_>>()
     });
     // 创建 kv cache
-    let kv_cache = KVCache::new(template, dist, &mut pages);
+    let mut kv_cache = KVCache::new(template, dist, &mut pages);
     // 推理
     let graph = nn::Graph(graph::Graph { topo, nodes, edges });
     let gpu = Gpu::new(dev.retain_primary(), Default::default());
@@ -355,7 +333,7 @@ fn launch_partial(
     let sample = Sample::new(&gpu);
     gpu.apply(|ctx| {
         let mut handle = Handle::with_comm(ctx, comm);
-        let mut models = (0..=5)
+        let mut models = (0..=4)
             .map(|i| ModelExec::new(&mut handle, graph.clone(), 1 << i, 1, &mut pages))
             .collect::<Box<_>>();
 
@@ -363,11 +341,14 @@ fn launch_partial(
         let mut output_head = OutputHead::new(sample, ctx, nvoc);
         let mut pos = 0;
         for tokens in tokens {
-            let model_idx = tokens.len().next_power_of_two().trailing_zeros() as usize;
+            let to_cache = tokens.len().next_power_of_two();
+            kv_cache.prepare(pos + to_cache, &mut pages);
+
+            let model_idx = to_cache.trailing_zeros() as usize;
             let next_ = models[model_idx].launch(
                 &tokens,
                 pos,
-                &kv_cache.tensor_vir,
+                kv_cache.as_tensor(),
                 &mut pages,
                 &attn,
                 &mut output_head,

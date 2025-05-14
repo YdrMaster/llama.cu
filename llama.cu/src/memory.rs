@@ -1,11 +1,89 @@
-﻿use operators::cuda::{Device, MappedMem, MemProp, PhyMem, VirByte, VirMem};
+﻿use nn::{Distribution, Tensor};
+use operators::cuda::{Device, MappedMem, MemProp, PhyMem, VirByte, VirMem};
 use std::{
-    ops::Deref,
+    mem::replace,
+    ops::{Deref, RangeBounds},
     ptr::dangling,
     sync::{Arc, LazyLock},
 };
 
-pub(super) struct MemPages {
+pub(crate) enum Page {
+    Vir(VirMem),
+    Mapped(MappedMem),
+}
+
+pub(crate) struct AddrRegion {
+    len: usize,
+    pages: Box<[Page]>,
+}
+
+impl Deref for AddrRegion {
+    type Target = [VirByte];
+
+    fn deref(&self) -> &Self::Target {
+        let ptr = self.pages.first().map_or(dangling(), |page| match page {
+            Page::Vir(mem) => mem.as_ptr(),
+            Page::Mapped(mem) => mem.as_ptr().cast(),
+        });
+
+        unsafe { std::slice::from_raw_parts(ptr, self.len) }
+    }
+}
+
+impl AddrRegion {
+    pub fn pages(&mut self, range: impl RangeBounds<usize>) -> &mut [Page] {
+        &mut self.pages[(range.start_bound().cloned(), range.end_bound().cloned())]
+    }
+}
+
+pub(crate) struct KVCache {
+    /// 基于虚地址的 cache 张量
+    tensor_vir: Tensor<*const VirByte, 2>,
+    /// cache 占用的地址区域
+    mem_region: AddrRegion,
+    /// cache 中每个 token 的尺寸
+    size_per_token: usize,
+    /// 每个页的大小
+    page_size: usize,
+    /// 已映射的页数
+    mapped: usize,
+}
+
+impl KVCache {
+    pub fn new(template: &Tensor<usize, 2>, dist: Distribution, pages: &mut MemPages) -> Self {
+        let mut shape = template.shape().to_vec();
+        shape[3] = shape[3] / dist.total * dist.len;
+        let template = Tensor::from_dim_slice(template.dt(), &shape);
+
+        let size_per_token = template.get() / template.shape()[0];
+        let mem_region = pages.reserve_vir(*template.get()); // 为 kv cache 分配虚页
+        let tensor_vir = template
+            .map(|_| mem_region.as_ptr()) // 存入张量
+            .transform(|layout| layout.transpose(&[3, 1, 2, 0])); // 转置 [nkvh, nblk, 2, nctx, dh]
+
+        Self {
+            tensor_vir,
+            mem_region,
+            size_per_token,
+            page_size: pages.page_size(),
+            mapped: 0,
+        }
+    }
+
+    pub fn prepare(&mut self, ntok: usize, pages: &mut MemPages) {
+        let n_page = (ntok * self.size_per_token).div_ceil(self.page_size);
+        if self.mapped < n_page {
+            pages.map(self.mem_region.pages(self.mapped..n_page));
+            self.mapped = n_page
+        }
+    }
+
+    pub const fn as_tensor(&self) -> &Tensor<*const VirByte, 2> {
+        &self.tensor_vir
+    }
+}
+
+pub(crate) struct MemPages {
     base: usize,
     prop: MemProp,
     size: usize,
@@ -38,7 +116,10 @@ impl MemPages {
     pub fn reserve_vir(&self, size: usize) -> AddrRegion {
         let n_pages = size.div_ceil(self.size);
         if n_pages == 0 {
-            return AddrRegion::Vir(Box::new([]));
+            return AddrRegion {
+                len: 0,
+                pages: Box::new([]),
+            };
         }
 
         let mut ans = Vec::with_capacity(n_pages);
@@ -54,7 +135,10 @@ impl MemPages {
             end = next.as_ptr_range().end;
             ans.push(next)
         }
-        AddrRegion::Vir(ans.into())
+        AddrRegion {
+            len: n_pages * self.size,
+            pages: ans.into_iter().map(Page::Vir).collect(),
+        }
     }
 
     pub fn put(&mut self, page: Arc<PhyMem>) {
@@ -67,58 +151,53 @@ impl MemPages {
             .unwrap_or_else(|| self.prop.create(self.size))
     }
 
-    pub fn map(&mut self, region: &mut AddrRegion) {
-        match region {
-            AddrRegion::Vir(vir_mems) => {
-                *region = AddrRegion::Mapped(
-                    std::mem::take(vir_mems)
-                        .into_iter()
-                        .map(|vir| vir.map(self.take()))
-                        .collect(),
-                )
-            }
-            AddrRegion::Mapped(_) => {}
-        }
-    }
-
-    pub fn unmap(&mut self, region: &mut AddrRegion) {
-        match region {
-            AddrRegion::Vir(_) => {}
-            AddrRegion::Mapped(pages) => {
-                *region = AddrRegion::Vir(
-                    std::mem::take(pages)
-                        .into_iter()
-                        .map(|mapped| {
-                            let (vir, phy) = mapped.unmap();
-                            self.put(phy);
-                            vir
-                        })
-                        .collect(),
-                )
+    pub fn map(&mut self, pages: &mut [Page]) {
+        // 创建一个占位用的虚页
+        let mut placeholder = None;
+        // 遍历页面
+        for page in pages {
+            match page {
+                Page::Mapped(_) => {} // 已映射，什么都不做
+                Page::Vir(vir) => {
+                    // 取出或创建占位虚页
+                    let exchange = placeholder
+                        .take()
+                        .unwrap_or_else(|| VirMem::new(self.size, self.base));
+                    // 换出虚页并映射
+                    let mapped = replace(vir, exchange).map(self.take());
+                    // 换回占位的页
+                    let Page::Vir(exchange) = replace(page, Page::Mapped(mapped)) else {
+                        unreachable!()
+                    };
+                    placeholder = Some(exchange)
+                }
             }
         }
     }
-}
 
-pub enum AddrRegion {
-    Vir(Box<[VirMem]>),
-    Mapped(Box<[MappedMem]>),
-}
-
-impl Deref for AddrRegion {
-    type Target = [VirByte];
-
-    fn deref(&self) -> &Self::Target {
-        let (ptr, len) = match self {
-            Self::Vir(pages) => get_slice(pages),
-            Self::Mapped(pages) => get_slice(pages),
-        };
-        unsafe { std::slice::from_raw_parts(ptr, len) }
+    pub fn unmap(&mut self, pages: &mut [Page]) {
+        // 创建一个占位用的虚页
+        let mut placeholder = None;
+        // 遍历页面
+        for page in pages {
+            match page {
+                Page::Vir(_) => {} // 已解除，什么都不做
+                Page::Mapped(_) => {
+                    // 取出或创建占位虚页
+                    let exchange = placeholder
+                        .take()
+                        .unwrap_or_else(|| Page::Vir(VirMem::new(self.size, self.base)));
+                    // 换出已映射的页
+                    let Page::Mapped(mapped) = replace(page, exchange) else {
+                        unreachable!()
+                    };
+                    // 解除映射
+                    let (vir, phy) = mapped.unmap();
+                    self.put(phy);
+                    // 换回占位的页
+                    placeholder = Some(replace(page, Page::Vir(vir)))
+                }
+            }
+        }
     }
-}
-
-fn get_slice<T, U: Deref<Target = [T]>>(pages: &[U]) -> (*const VirByte, usize) {
-    pages.first().map_or((dangling(), 0), |slice| {
-        (slice.as_ptr().cast(), slice.len() * pages.len())
-    })
 }

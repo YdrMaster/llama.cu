@@ -131,7 +131,7 @@ pub fn init<'a>(gguf: &'a GGufModel<'a>) -> nn::LLaMA<Tensor<&'a [u8], 2>> {
 }
 
 /// 构造 kv cache 张量
-pub fn kv_cache<const N: usize>(gguf: &GGufModel, max_ctx: usize) -> Tensor<usize, N> {
+pub fn kv_cache<const N: usize>(gguf: &GGufModel) -> Tensor<usize, N> {
     let dt = gguf.tensors["token_embd.weight"].dt();
     let nblk = meta![gguf => llm_block_count];
     let nctx = meta![gguf => llm_context_length];
@@ -139,7 +139,7 @@ pub fn kv_cache<const N: usize>(gguf: &GGufModel, max_ctx: usize) -> Tensor<usiz
     let nh = meta![gguf => llm_attention_head_count];
     let nkvh = meta![gguf => llm_attention_head_count_kv; nh];
     let dh = meta![gguf => llm_rope_dimension_count; d / nh];
-    Tensor::from_dim_slice(dt, [nctx.min(max_ctx), nblk, 2, nkvh, dh])
+    Tensor::from_dim_slice(dt, [nctx, nblk, 2, nkvh, dh])
 }
 
 /// 构造 sin cos 表张量

@@ -59,13 +59,13 @@ impl<'ctx> ModelExec<'ctx> {
         let exec = graph.into_exec();
 
         // memcpy node 要求当时虚地址有对应的物理页
-        pages.map(&mut workspace);
+        pages.map(workspace.pages(..));
 
         // 构造 cuda graph
         let execs = handle.merge_cuda_graph(exec);
 
         // 解除映射回收物理页
-        pages.unmap(&mut workspace);
+        pages.unmap(workspace.pages(..));
 
         Self {
             n_tok,
@@ -87,7 +87,7 @@ impl<'ctx> ModelExec<'ctx> {
         config: Config,
         stream: &Stream,
     ) -> u32 {
-        pages.map(&mut self.workspace);
+        pages.map(self.workspace.pages(..));
 
         let mut padding = vec![0; self.n_tok];
         padding[..tokens.len()].copy_from_slice(tokens);
