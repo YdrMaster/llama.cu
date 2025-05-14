@@ -696,6 +696,7 @@ dependencies = [
  "operators",
  "rand",
  "regex",
+ "smallvec",
  "tensor",
  "tokeneer",
 ]

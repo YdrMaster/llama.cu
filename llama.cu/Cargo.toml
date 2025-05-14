@@ -9,6 +9,7 @@ tokeneer = { git = "https://github.com/InfiniTensor/tokeneer", rev = "12c2d99" }
 regex.workspace = true
 memmap2 = "0.9"
 rand = "0.9"
+smallvec = "1.15"
 nn = { git = "https://github.com/YdrMaster/InfiniNN", rev = "5b3a0f8" }
 graph = { git = "https://github.com/YdrMaster/InfiniNN", rev = "5b3a0f8" }
 ggus = { git = "https://github.com/InfiniTensor/gguf", rev = "23c362f" }

@@ -14,36 +14,42 @@ use nn::{
 use operators::{
     Operator,
     attention_kv_cached::cuda::Operator as Attn,
-    cuda::{self, DevMem, Device, Gpu, Stream, VirByte, VirMem},
+    cuda::{self, Device, Gpu, VirByte, VirMem},
     nccl::{Communicator, CommunicatorGroup},
-    random_sample::{Indices, KVPair, RandomSample, cuda::Operator as Sample},
+    random_sample::{SampleArgs, cuda::Operator as Sample},
 };
+use smallvec::{SmallVec, smallvec};
 use std::{
     collections::HashSet,
+    ffi::c_int,
     path::Path,
     sync::mpsc::{Receiver, SendError, Sender, channel},
     time::{Duration, Instant},
 };
 use tokeneer::Bpe;
 
-pub fn infer(model: impl AsRef<Path>, gpus: &[i32], prompt: &str, max_steps: usize) {
+#[allow(non_camel_case_types)]
+type utok = u32;
+
+pub fn infer(model: impl AsRef<Path>, gpus: &[c_int], prompt: &str, max_steps: usize) {
     // 从文件加载权重
     let maps = map_files(model);
     let mut gguf = GGufModel::read(maps.iter().map(|x| &**x));
     insert_sin_cos(&mut gguf);
+    // 调取重要配置
     let nvoc = meta![gguf => tokenizer_ggml_tokens].len();
-    let kv_cache = model::kv_cache::<2>(&gguf, 1024);
+    let eos = meta![gguf => tokenizer_ggml_eos_token_id];
     let llama = model::init(&gguf);
     let tokeneer = Bpe::from_gguf(&gguf);
-    let eos = meta![gguf => tokenizer_ggml_eos_token_id];
+    let prompt_tokens = SmallVec::from_vec(tokeneer.encode(prompt));
+    let kv_cache = model::kv_cache(&gguf, prompt_tokens.len() + max_steps);
 
     assert!(cuda::init().is_ok());
-
+    let (next, receiver) = channel();
     let (duration, steps) = match gpus {
         &[] => unreachable!(),
         &[index] => {
             let (sender, tokens) = channel();
-            let (next, receiver) = channel();
             let channel = MonoChannel {
                 dev: Device::new(index),
                 tokens,
@@ -53,30 +59,31 @@ pub fn infer(model: impl AsRef<Path>, gpus: &[i32], prompt: &str, max_steps: usi
             std::thread::scope(|s| {
                 let _thread = s.spawn(move || launc_mono(llama, nvoc, &kv_cache, channel));
 
-                sender.send(tokeneer.encode(prompt)).unwrap();
+                sender.send(prompt_tokens).unwrap();
 
-                let mut steps = 1;
                 let next = receiver.recv().unwrap();
-                sender.send(vec![next]).unwrap();
+                sender.send(smallvec![next]).unwrap();
                 print_now!("{prompt}{}", tokeneer.decode(&[next]));
 
-                let time = Instant::now();
-                for next in receiver.into_iter().take(max_steps) {
+                let mut duration = Duration::ZERO;
+                let mut steps = 1;
+                let mut time = Instant::now();
+                for next in receiver.into_iter().take(max_steps - 1) {
+                    duration += time.elapsed();
                     if next == eos {
                         break;
                     }
-                    sender.send(vec![next]).unwrap();
+                    sender.send(smallvec![next]).unwrap();
+                    time = Instant::now();
                     steps += 1;
                     print_now!("{}", tokeneer.decode(&[next]))
                 }
-                let time = time.elapsed();
                 drop(sender);
-                (time, steps)
+                (duration, steps)
             })
         }
         gpus => {
             let mut senders = Vec::new();
-            let mut receiver = None;
             let comms = CommunicatorGroup::new(&gpus);
             let channels = comms
                 .into_vec()
@@ -88,16 +95,18 @@ pub fn infer(model: impl AsRef<Path>, gpus: &[i32], prompt: &str, max_steps: usi
                         receiver
                     },
                     next: if comm.rank() == 0 {
-                        let (sender, receiver_) = channel();
-                        assert!(receiver.replace(receiver_).is_none());
-                        Some(sender)
+                        Some(next.clone())
                     } else {
                         None
                     },
                     comm,
                 })
                 .collect::<Box<_>>();
-            let receiver = receiver.unwrap();
+            let send_all = move |next: SmallVec<[utok; 1]>| {
+                for sender in &senders {
+                    sender.send(next.clone()).unwrap()
+                }
+            };
 
             std::thread::scope(|s| {
                 let _threads = channels
@@ -111,33 +120,27 @@ pub fn infer(model: impl AsRef<Path>, gpus: &[i32], prompt: &str, max_steps: usi
                     })
                     .collect::<Vec<_>>();
 
-                let tokens = tokeneer.encode(prompt);
-                for sender in &senders {
-                    sender.send(tokens.clone()).unwrap()
-                }
-                let send_all = move |next: u32| {
-                    for sender in &senders {
-                        sender.send(vec![next]).unwrap()
-                    }
-                };
+                send_all(prompt_tokens);
 
-                let mut steps = 1;
                 let next = receiver.recv().unwrap();
-                send_all(next);
+                send_all(smallvec![next]);
                 print_now!("{prompt}{}", tokeneer.decode(&[next]));
 
-                let time = Instant::now();
-                for next in receiver.into_iter().take(max_steps) {
+                let mut duration = Duration::ZERO;
+                let mut steps = 1;
+                let mut time = Instant::now();
+                for next in receiver.into_iter().take(max_steps - 1) {
+                    duration += time.elapsed();
                     if next == eos {
                         break;
                     }
-                    send_all(next);
+                    send_all(smallvec![next]);
+                    time = Instant::now();
                     steps += 1;
                     print_now!("{}", tokeneer.decode(&[next]))
                 }
-                let time = time.elapsed();
                 drop(send_all);
-                (time, steps)
+                (duration, steps)
             })
         }
     };
@@ -176,15 +179,15 @@ impl KVCache {
 }
 
 struct MonoChannel {
-    pub dev: Device,
-    pub tokens: Receiver<Vec<u32>>,
-    pub next: Sender<u32>,
+    dev: Device,
+    tokens: Receiver<SmallVec<[utok; 1]>>,
+    next: Sender<utok>,
 }
 
 struct Channel {
-    pub comm: Communicator,
-    pub tokens: Receiver<Vec<u32>>,
-    pub next: Option<Sender<u32>>,
+    comm: Communicator,
+    tokens: Receiver<SmallVec<[utok; 1]>>,
+    next: Option<Sender<utok>>,
 }
 
 fn builder() -> GraphBuilder {
@@ -207,6 +210,8 @@ fn launc_mono(
     template: &Tensor<usize, 2>,
     channel: MonoChannel,
 ) {
+    let MonoChannel { dev, tokens, next } = channel;
+    // 构造图表示
     let nn::Graph(graph::Graph { topo, nodes, edges }) = builder()
         .build(
             llama,
@@ -218,14 +223,14 @@ fn launc_mono(
         )
         .unwrap();
     // 排布权重存储
-    let mut ranges = RangeCollector::new(512);
+    let align = Some(dev.alignment()).filter(|&n| n > 0).unwrap_or(512);
+    let mut ranges = RangeCollector::new(align);
     for nn::Edge { external, .. } in &edges {
         if let Some(nn::External { item, .. }) = external {
             ranges.insert(item.get().as_ptr(), item.get().len())
         }
     }
     // 权重加载
-    let MonoChannel { dev, tokens, next } = channel;
     let mut pages = MemPages::new(&dev);
     let page_size = pages.page_size();
     let mut weight = VirMem::new(ranges.size().div_ceil(page_size) * page_size, 0).map_on(&dev);
@@ -265,20 +270,13 @@ fn launc_mono(
     let attn = Attn::new(&gpu);
     let sample = Sample::new(&gpu);
     gpu.apply(|ctx| {
-        let stream = ctx.stream();
-        let mut output_head = OutputHead {
-            sample,
-            indices: sample_indices::<2>(nvoc, &stream),
-            kv_pair: ctx.malloc::<u8>(size_of::<KVPair<()>>()),
-            kv_pair_host: ctx.malloc_host::<u8>(size_of::<KVPair<()>>()),
-        };
-
         let mut handle = Handle::new(ctx);
-
         let mut models = (0..=6)
             .map(|i| ModelExec::new(&mut handle, graph.clone(), 1 << i, 1, &mut pages))
             .collect::<Box<_>>();
 
+        let stream = ctx.stream();
+        let mut output_head = OutputHead::new(sample, ctx, nvoc);
         let mut pos = 0;
         for tokens in tokens {
             let model_idx = tokens.len().next_power_of_two().trailing_zeros() as usize;
@@ -289,6 +287,7 @@ fn launc_mono(
                 &mut pages,
                 &attn,
                 &mut output_head,
+                SampleArgs::new(1.2, 0.5, 1000).unwrap(),
                 &stream,
             );
             pos += tokens.len();
@@ -306,6 +305,8 @@ fn launch_partial(
     template: &Tensor<usize, 2>,
     channel: Channel,
 ) {
+    let Channel { comm, tokens, next } = channel;
+    let dev = comm.device();
     // 构造图表示
     let nn::Graph(graph::Graph { topo, nodes, edges }) = builder()
         .register_op("all-reduce", nn_op::all_reduce::AllReduce)
@@ -319,7 +320,8 @@ fn launch_partial(
         )
         .unwrap();
     // 排布权重存储
-    let mut ranges = RangeCollector::new(512);
+    let align = Some(dev.alignment()).filter(|&n| n > 0).unwrap_or(512);
+    let mut ranges = RangeCollector::new(align);
     for nn::Edge { external, .. } in &edges {
         if let Some(nn::External { item, .. }) = external {
             let TPTensor { act, val } = item;
@@ -331,8 +333,6 @@ fn launch_partial(
         }
     }
     // 权重加载
-    let Channel { comm, tokens, next } = channel;
-    let dev = comm.device();
     let mut pages = MemPages::new(&dev);
     let page_size = pages.page_size();
     let mut weight = VirMem::new(ranges.size().div_ceil(page_size) * page_size, 0).map_on(&dev);
@@ -385,20 +385,13 @@ fn launch_partial(
     let attn = Attn::new(&gpu);
     let sample = Sample::new(&gpu);
     gpu.apply(|ctx| {
-        let stream = ctx.stream();
-        let mut output_head = OutputHead {
-            sample,
-            indices: sample_indices::<2>(nvoc, &stream),
-            kv_pair: ctx.malloc::<u8>(size_of::<KVPair<()>>()),
-            kv_pair_host: ctx.malloc_host::<u8>(size_of::<KVPair<()>>()),
-        };
-
         let mut handle = Handle::with_comm(ctx, comm);
-
         let mut models = (0..=5)
             .map(|i| ModelExec::new(&mut handle, graph.clone(), 1 << i, 1, &mut pages))
             .collect::<Box<_>>();
 
+        let stream = ctx.stream();
+        let mut output_head = OutputHead::new(sample, ctx, nvoc);
         let mut pos = 0;
         for tokens in tokens {
             let model_idx = tokens.len().next_power_of_two().trailing_zeros() as usize;
@@ -409,6 +402,7 @@ fn launch_partial(
                 &mut pages,
                 &attn,
                 &mut output_head,
+                SampleArgs::new(1.2, 0.5, 1000).unwrap(),
                 &stream,
             );
             pos += tokens.len();
@@ -419,13 +413,4 @@ fn launch_partial(
             }
         }
     })
-}
-
-/// 采样序号表
-fn sample_indices<'ctx, const N: usize>(
-    nvoc: usize,
-    stream: &Stream<'ctx>,
-) -> Tensor<DevMem<'ctx>, N> {
-    let Indices { n, mem } = Sample::build_indices(nvoc, stream);
-    Tensor::from_dim_slice(types::U32, [n]).map(|_| mem)
 }

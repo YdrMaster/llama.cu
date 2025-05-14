@@ -8,11 +8,14 @@ use nn::Tensor;
 use operators::{
     Operator, TensorLayout,
     attention_kv_cached::{Args as AttnArgs, cuda::Operator as Attn},
-    cuda::{DevMem, HostMem, Stream, VirByte, memcpy_h2d},
-    random_sample::{Args as SampleArgs, KVPair, SampleArgs as Config, cuda::Operator as Sample},
+    cuda::{CurrentCtx, DevMem, HostMem, Stream, VirByte, memcpy_h2d},
+    random_sample::{
+        Args as SampleArgs, Indices, KVPair, RandomSample, SampleArgs as Config,
+        cuda::Operator as Sample,
+    },
 };
 use std::iter::zip;
-use tensor::ndarray_layout::ArrayLayout;
+use tensor::{digit_layout::types, ndarray_layout::ArrayLayout};
 
 pub struct ModelExec<'ctx> {
     n_tok: usize,
@@ -20,13 +23,6 @@ pub struct ModelExec<'ctx> {
     workspace: AddrRegion,
     inputs: Box<[Tensor<*const VirByte, 2>]>,
     outputs: Box<[Tensor<*const VirByte, 2>]>,
-}
-
-pub struct OutputHead<'ctx> {
-    pub sample: Sample,
-    pub indices: Tensor<DevMem<'ctx>, 2>,
-    pub kv_pair: DevMem<'ctx>,
-    pub kv_pair_host: HostMem<'ctx>,
 }
 
 impl<'ctx> ModelExec<'ctx> {
@@ -88,6 +84,7 @@ impl<'ctx> ModelExec<'ctx> {
         pages: &mut MemPages,
         attn: &Attn,
         output_head: &mut OutputHead,
+        config: Config,
         stream: &Stream,
     ) -> u32 {
         pages.map(&mut self.workspace);
@@ -172,8 +169,12 @@ impl<'ctx> ModelExec<'ctx> {
                     logits_base: offset_ptr(&logits).cast(),
                     indices: layout(indices),
                     indices_base: indices.get().as_ptr(),
-                    config: Config::new(1.2, 0.5, 1000).unwrap(),
-                    seed: rand::random(),
+                    seed: if config.is_argmax() {
+                        1.
+                    } else {
+                        rand::random()
+                    },
+                    config,
                 },
                 &mut [],
                 stream,
@@ -181,5 +182,27 @@ impl<'ctx> ModelExec<'ctx> {
             .unwrap();
         stream.memcpy_d2h(kv_pair_host, kv_pair).synchronize();
         unsafe { kv_pair_host.as_ptr().cast::<KVPair<f16>>().read() }.idx() as _
+    }
+}
+
+pub struct OutputHead<'ctx> {
+    sample: Sample,
+    indices: Tensor<DevMem<'ctx>, 2>,
+    kv_pair: DevMem<'ctx>,
+    kv_pair_host: HostMem<'ctx>,
+}
+
+impl<'ctx> OutputHead<'ctx> {
+    pub fn new(sample: Sample, ctx: &'ctx CurrentCtx, nvoc: usize) -> Self {
+        let stream = ctx.stream();
+        Self {
+            sample,
+            indices: {
+                let Indices { n, mem } = Sample::build_indices(nvoc, &stream);
+                Tensor::from_dim_slice(types::U32, [n]).map(|_| mem)
+            },
+            kv_pair: stream.malloc::<u8>(size_of::<KVPair<()>>()),
+            kv_pair_host: ctx.malloc_host::<u8>(size_of::<KVPair<()>>()),
+        }
     }
 }
