@@ -25,7 +25,7 @@ pub struct Session {
 pub struct BusySession<'s>(Receiver<String>, PhantomData<&'s mut Session>);
 
 #[repr(transparent)]
-pub struct Handle(std::thread::JoinHandle<(Duration, usize)>);
+pub struct Handle(Option<std::thread::JoinHandle<(Duration, usize)>>);
 
 impl Session {
     pub fn new(model: PathBuf, gpus: Box<[c_int]>, max_steps: usize) -> (Self, Handle) {
@@ -33,7 +33,7 @@ impl Session {
         let (response, assistant) = channel();
         let thread: std::thread::JoinHandle<(Duration, usize)> =
             std::thread::spawn(move || infer::infer(model, &gpus, max_steps, request, response));
-        (Self { user, assistant }, Handle(thread))
+        (Self { user, assistant }, Handle(Some(thread)))
     }
 
     pub fn send(&mut self, prompt: String) -> BusySession {
@@ -46,15 +46,11 @@ impl BusySession<'_> {
     pub fn receive(&self) -> Option<String> {
         self.0.recv().ok()
     }
-
-    pub fn into_receiver(self) -> Receiver<String> {
-        self.0
-    }
 }
 
-impl Handle {
-    pub fn join(self) {
-        let (duration, steps) = self.0.join().unwrap();
+impl Drop for Handle {
+    fn drop(&mut self) {
+        let (duration, steps) = self.0.take().unwrap().join().unwrap();
         let time = duration.div_f32(steps as _);
         println!();
         println!();

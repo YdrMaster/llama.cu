@@ -77,7 +77,7 @@ pub fn infer(
         }
         gpus => {
             let mut senders = Vec::new();
-            let comms = CommunicatorGroup::new(&gpus);
+            let comms = CommunicatorGroup::new(gpus);
             let channels = comms
                 .into_vec()
                 .into_iter()

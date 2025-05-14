@@ -5,7 +5,9 @@ mod service;
 use clap::Parser;
 use dialog::DialogArgs;
 use generate::GenerateArgs;
+use regex::Regex;
 use service::ServiceArgs;
+use std::{ffi::c_int, path::PathBuf, sync::LazyLock};
 
 #[macro_use]
 extern crate clap;
@@ -33,5 +35,34 @@ enum Commands {
     Generate(GenerateArgs),
     /// 命令行对话
     Dialog(DialogArgs),
+    /// web 服务
     Service(ServiceArgs),
+}
+
+#[derive(Args)]
+pub struct BaseArgs {
+    model: PathBuf,
+    #[clap(long)]
+    gpus: Option<String>,
+    #[clap(long)]
+    max_steps: Option<usize>,
+}
+
+impl BaseArgs {
+    pub fn gpus(&self) -> Box<[c_int]> {
+        self.gpus
+            .as_ref()
+            .map(|devices| {
+                static NUM_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\d+").unwrap());
+                NUM_REGEX
+                    .find_iter(devices)
+                    .map(|c| c.as_str().parse().unwrap())
+                    .collect()
+            })
+            .unwrap_or_else(|| vec![1].into())
+    }
+
+    pub fn max_steps(&self) -> usize {
+        self.max_steps.unwrap_or(1000)
+    }
 }
