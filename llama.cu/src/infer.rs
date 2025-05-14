@@ -20,12 +20,11 @@ use operators::{
 };
 use std::{
     collections::HashSet,
-    io::Write,
     path::Path,
     sync::mpsc::{Receiver, SendError, Sender, channel},
     time::{Duration, Instant},
 };
-use tokeneer::{Bpe, Tokeneer};
+use tokeneer::Bpe;
 
 pub fn infer(model: impl AsRef<Path>, gpus: &[i32], prompt: &str, max_steps: usize) {
     // 从文件加载权重
@@ -35,85 +34,120 @@ pub fn infer(model: impl AsRef<Path>, gpus: &[i32], prompt: &str, max_steps: usi
     let nvoc = meta![gguf => tokenizer_ggml_tokens].len();
     let kv_cache = model::kv_cache::<2>(&gguf, 1024);
     let llama = model::init(&gguf);
+    let tokeneer = Bpe::from_gguf(&gguf);
+    let eos = meta![gguf => tokenizer_ggml_eos_token_id];
 
     assert!(cuda::init().is_ok());
 
-    let mut senders = Vec::new();
-    let mut receiver = None;
-    let comms = CommunicatorGroup::new(&gpus);
-    let channels = comms
-        .into_vec()
-        .into_iter()
-        .map(|comm| Channel {
-            tokens: {
-                let (sender, receiver) = channel();
-                senders.push(sender);
-                receiver
-            },
-            next: if comm.rank() == 0 {
-                let (sender, receiver_) = channel();
-                assert!(receiver.replace(receiver_).is_none());
-                Some(sender)
-            } else {
-                None
-            },
-            comm,
-        })
-        .collect::<Box<_>>();
+    let (duration, steps) = match gpus {
+        &[] => unreachable!(),
+        &[index] => {
+            let (sender, tokens) = channel();
+            let (next, receiver) = channel();
+            let channel = MonoChannel {
+                dev: Device::new(index),
+                tokens,
+                next,
+            };
 
-    std::thread::scope(|s| {
-        let threads = channels
-            .into_iter()
-            .enumerate()
-            .map(|(i, channel)| {
-                let llama = llama.clone();
-                let kv_cache = kv_cache.clone();
-                let dist = Distribution::new(i, 1, gpus.len());
-                s.spawn(move || launch_partial(llama, dist, nvoc, &kv_cache, channel))
+            std::thread::scope(|s| {
+                let _thread = s.spawn(move || launc_mono(llama, nvoc, &kv_cache, channel));
+
+                sender.send(tokeneer.encode(prompt)).unwrap();
+
+                let mut steps = 1;
+                let next = receiver.recv().unwrap();
+                sender.send(vec![next]).unwrap();
+                print_now!("{prompt}{}", tokeneer.decode(&[next]));
+
+                let time = Instant::now();
+                for next in receiver.into_iter().take(max_steps) {
+                    if next == eos {
+                        break;
+                    }
+                    sender.send(vec![next]).unwrap();
+                    steps += 1;
+                    print_now!("{}", tokeneer.decode(&[next]))
+                }
+                let time = time.elapsed();
+                drop(sender);
+                (time, steps)
             })
-            .collect::<Vec<_>>();
-
-        let tokeneer = Bpe::from_gguf(&gguf);
-        let receiver = receiver.unwrap();
-        let tokens = tokeneer.encode(prompt);
-        for sender in &senders {
-            sender.send(tokens.clone()).unwrap()
         }
-        let send_all = move |next: u32| {
-            for sender in &senders {
-                sender.send(vec![next]).unwrap()
-            }
-        };
+        gpus => {
+            let mut senders = Vec::new();
+            let mut receiver = None;
+            let comms = CommunicatorGroup::new(&gpus);
+            let channels = comms
+                .into_vec()
+                .into_iter()
+                .map(|comm| Channel {
+                    tokens: {
+                        let (sender, receiver) = channel();
+                        senders.push(sender);
+                        receiver
+                    },
+                    next: if comm.rank() == 0 {
+                        let (sender, receiver_) = channel();
+                        assert!(receiver.replace(receiver_).is_none());
+                        Some(sender)
+                    } else {
+                        None
+                    },
+                    comm,
+                })
+                .collect::<Box<_>>();
+            let receiver = receiver.unwrap();
 
-        let eos = meta![gguf => tokenizer_ggml_eos_token_id];
-        let prefill = tokens.len();
-        let mut steps = 1;
-        let next = receiver.recv().unwrap();
-        send_all(next);
-        print_now!("{prompt}{}", tokeneer.decode(&[next]));
+            std::thread::scope(|s| {
+                let _threads = channels
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, channel)| {
+                        let llama = llama.clone();
+                        let kv_cache = kv_cache.clone();
+                        let dist = Distribution::new(i, 1, gpus.len());
+                        s.spawn(move || launch_partial(llama, dist, nvoc, &kv_cache, channel))
+                    })
+                    .collect::<Vec<_>>();
 
-        let time = Instant::now();
-        for next in receiver.into_iter().take(max_steps) {
-            if next == eos {
-                break;
-            }
-            send_all(next);
-            steps += 1;
-            print_now!("{}", tokeneer.decode(&[next]))
+                let tokens = tokeneer.encode(prompt);
+                for sender in &senders {
+                    sender.send(tokens.clone()).unwrap()
+                }
+                let send_all = move |next: u32| {
+                    for sender in &senders {
+                        sender.send(vec![next]).unwrap()
+                    }
+                };
+
+                let mut steps = 1;
+                let next = receiver.recv().unwrap();
+                send_all(next);
+                print_now!("{prompt}{}", tokeneer.decode(&[next]));
+
+                let time = Instant::now();
+                for next in receiver.into_iter().take(max_steps) {
+                    if next == eos {
+                        break;
+                    }
+                    send_all(next);
+                    steps += 1;
+                    print_now!("{}", tokeneer.decode(&[next]))
+                }
+                let time = time.elapsed();
+                drop(send_all);
+                (time, steps)
+            })
         }
-        let time = time.elapsed();
-        drop(send_all);
-        for thread in threads {
-            thread.join().unwrap()
-        }
-        let time = time.div_f32(steps as _);
-        println!();
-        println!();
-        println!(
-            "prefill = {prefill} steps = {steps}, perf: {time:?}/tok, {}tok/s",
-            Duration::from_secs(1).div_duration_f32(time),
-        )
-    })
+    };
+    let time = duration.div_f32(steps as _);
+    println!();
+    println!();
+    println!(
+        "steps = {steps}, perf: {time:?}/tok, {}tok/s",
+        Duration::from_secs(1).div_duration_f32(time),
+    )
 }
 
 struct KVCache {
@@ -141,6 +175,12 @@ impl KVCache {
     }
 }
 
+struct MonoChannel {
+    pub dev: Device,
+    pub tokens: Receiver<Vec<u32>>,
+    pub next: Sender<u32>,
+}
+
 struct Channel {
     pub comm: Communicator,
     pub tokens: Receiver<Vec<u32>>,
@@ -161,14 +201,11 @@ fn builder() -> GraphBuilder {
 }
 
 /// 单卡启动
-#[allow(unused)]
 fn launc_mono(
     llama: LLaMA<Tensor<&[u8], 2>>,
-    dev: Device,
     nvoc: usize,
-    tokeneer: &Tokeneer<Bpe>,
     template: &Tensor<usize, 2>,
-    prompt: &str,
+    channel: MonoChannel,
 ) {
     let nn::Graph(graph::Graph { topo, nodes, edges }) = builder()
         .build(
@@ -188,6 +225,7 @@ fn launc_mono(
         }
     }
     // 权重加载
+    let MonoChannel { dev, tokens, next } = channel;
     let mut pages = MemPages::new(&dev);
     let page_size = pages.page_size();
     let mut weight = VirMem::new(ranges.size().div_ceil(page_size) * page_size, 0).map_on(&dev);
@@ -241,13 +279,10 @@ fn launc_mono(
             .map(|i| ModelExec::new(&mut handle, graph.clone(), 1 << i, 1, &mut pages))
             .collect::<Box<_>>();
 
-        print!("{prompt}");
-        std::io::stdout().flush().unwrap();
-        let mut tokens = tokeneer.encode(prompt);
         let mut pos = 0;
-        loop {
+        for tokens in tokens {
             let model_idx = tokens.len().next_power_of_two().trailing_zeros() as usize;
-            let next = models[model_idx].launch(
+            let next_ = models[model_idx].launch(
                 &tokens,
                 pos,
                 &kv_cache.tensor_vir,
@@ -256,10 +291,10 @@ fn launc_mono(
                 &mut output_head,
                 &stream,
             );
-            print!("{}", tokeneer.decode(&[next]));
-            std::io::stdout().flush().unwrap();
             pos += tokens.len();
-            tokens = vec![next]
+            if let Err(SendError(_)) = next.send(next_) {
+                break;
+            }
         }
     })
 }
