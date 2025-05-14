@@ -16,4 +16,3 @@ hyper = { version = "1.6", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["http1", "tokio", "server"] }
 http-body-util = "0.1"
 tokio-stream = "0.1"
-base64 = "0.22"

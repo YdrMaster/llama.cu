@@ -1,6 +1,7 @@
 ﻿use crate::{
     handle::{Attention, Exec, Handle},
     memory::MemPages,
+    upos,
     utils::{self, Blob, destruct, layout, offset_ptr},
 };
 use ggus::ggml_quants::f16;
@@ -16,6 +17,7 @@ use operators::{
 };
 use std::iter::zip;
 use tensor::{digit_layout::types, ndarray_layout::ArrayLayout};
+use tokeneer::utok;
 
 pub struct ModelExec<'ctx> {
     n_tok: usize,
@@ -78,9 +80,10 @@ impl<'ctx> ModelExec<'ctx> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn launch(
         &mut self,
-        tokens: &[u32],
+        tokens: &[utok],
         attn_pos: usize,
         kv_cache: &Tensor<*const VirByte, 2>,
         pages: &mut MemPages,
@@ -88,7 +91,7 @@ impl<'ctx> ModelExec<'ctx> {
         output_head: &mut OutputHead,
         config: Config,
         stream: &Stream,
-    ) -> u32 {
+    ) -> utok {
         if !self.workspace_mapped {
             self.workspace_mapped = true;
             pages.map(&mut self.workspace, ..)
@@ -96,11 +99,11 @@ impl<'ctx> ModelExec<'ctx> {
 
         let mut padding = vec![0; self.n_tok];
         padding[..tokens.len()].copy_from_slice(tokens);
-        let pos = (attn_pos as u32..).take(self.n_tok).collect::<Vec<_>>();
+        let pos = (attn_pos as upos..).take(self.n_tok).collect::<Vec<_>>();
         let input_data = [
             Blob::from_slice(&padding),
             Blob::from_slice(&pos),
-            Blob::from_slice(&[tokens.len() as u32 - 1]),
+            Blob::from_slice(&[tokens.len() as upos - 1]),
         ];
 
         for (input, data) in zip(&self.inputs, input_data.clone()) {

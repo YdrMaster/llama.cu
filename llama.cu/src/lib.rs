@@ -17,6 +17,9 @@ use std::{
     time::Duration,
 };
 
+#[allow(non_camel_case_types)]
+type upos = u32;
+
 pub struct Session {
     user: Sender<Task>,
     assistant: Receiver<Receiver<String>>,

@@ -28,10 +28,7 @@ use std::{
     sync::mpsc::{self, Receiver, SendError, Sender},
     time::{Duration, Instant},
 };
-use tokeneer::Bpe;
-
-#[allow(non_camel_case_types)]
-type utok = u32;
+use tokeneer::{Bpe, utok};
 
 pub fn infer(
     model: impl AsRef<Path>,

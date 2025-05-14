@@ -32,6 +32,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 pub struct ServiceArgs {
     #[clap(flatten)]
     base: BaseArgs,
+    #[clap(short, long)]
     port: u16,
 }
 
