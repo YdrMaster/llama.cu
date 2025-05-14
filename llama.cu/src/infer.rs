@@ -5,7 +5,7 @@
     loader::WeightLoader,
     memory::{AddrRegion, MemPages},
     model::{self, insert_sin_cos},
-    utils::{RangeCollector, meta, print_now},
+    utils::{RangeCollector, meta},
 };
 use ggus::{GGufMetaMapExt, ggml_quants::digit_layout::types};
 use nn::{
@@ -23,15 +23,21 @@ use std::{
     collections::HashSet,
     ffi::c_int,
     path::Path,
-    sync::mpsc::{Receiver, SendError, Sender, channel},
+    sync::mpsc::{self, Receiver, SendError, Sender},
     time::{Duration, Instant},
 };
-use tokeneer::Bpe;
+use tokeneer::{Bpe, Tokeneer};
 
 #[allow(non_camel_case_types)]
 type utok = u32;
 
-pub fn infer(model: impl AsRef<Path>, gpus: &[c_int], prompt: &str, max_steps: usize) {
+pub fn infer(
+    model: impl AsRef<Path>,
+    gpus: &[c_int],
+    max_steps: usize,
+    requests: Receiver<String>,
+    session: Sender<Receiver<String>>,
+) -> (Duration, usize) {
     // 从文件加载权重
     let maps = map_files(model);
     let mut gguf = GGufModel::read(maps.iter().map(|x| &**x));
@@ -41,15 +47,14 @@ pub fn infer(model: impl AsRef<Path>, gpus: &[c_int], prompt: &str, max_steps: u
     let eos = meta![gguf => tokenizer_ggml_eos_token_id];
     let llama = model::init(&gguf);
     let tokeneer = Bpe::from_gguf(&gguf);
-    let prompt_tokens = SmallVec::from_vec(tokeneer.encode(prompt));
-    let kv_cache = model::kv_cache(&gguf, prompt_tokens.len() + max_steps);
+    let kv_cache = model::kv_cache(&gguf, 1024);
 
     assert!(cuda::init().is_ok());
-    let (next, receiver) = channel();
-    let (duration, steps) = match gpus {
+    let (next, receiver) = mpsc::channel();
+    match gpus {
         &[] => unreachable!(),
         &[index] => {
-            let (sender, tokens) = channel();
+            let (sender, tokens) = mpsc::channel();
             let channel = MonoChannel {
                 dev: Device::new(index),
                 tokens,
@@ -59,27 +64,15 @@ pub fn infer(model: impl AsRef<Path>, gpus: &[c_int], prompt: &str, max_steps: u
             std::thread::scope(|s| {
                 let _thread = s.spawn(move || launc_mono(llama, nvoc, &kv_cache, channel));
 
-                sender.send(prompt_tokens).unwrap();
-
-                let next = receiver.recv().unwrap();
-                sender.send(smallvec![next]).unwrap();
-                print_now!("{prompt}{}", tokeneer.decode(&[next]));
-
-                let mut duration = Duration::ZERO;
-                let mut steps = 1;
-                let mut time = Instant::now();
-                for next in receiver.into_iter().take(max_steps - 1) {
-                    duration += time.elapsed();
-                    if next == eos {
-                        break;
-                    }
-                    sender.send(smallvec![next]).unwrap();
-                    time = Instant::now();
-                    steps += 1;
-                    print_now!("{}", tokeneer.decode(&[next]))
-                }
-                drop(sender);
-                (duration, steps)
+                service(
+                    requests,
+                    session,
+                    [sender].into(),
+                    receiver,
+                    tokeneer,
+                    max_steps,
+                    eos,
+                )
             })
         }
         gpus => {
@@ -90,7 +83,7 @@ pub fn infer(model: impl AsRef<Path>, gpus: &[c_int], prompt: &str, max_steps: u
                 .into_iter()
                 .map(|comm| Channel {
                     tokens: {
-                        let (sender, receiver) = channel();
+                        let (sender, receiver) = mpsc::channel();
                         senders.push(sender);
                         receiver
                     },
@@ -102,11 +95,6 @@ pub fn infer(model: impl AsRef<Path>, gpus: &[c_int], prompt: &str, max_steps: u
                     comm,
                 })
                 .collect::<Box<_>>();
-            let send_all = move |next: SmallVec<[utok; 1]>| {
-                for sender in &senders {
-                    sender.send(next.clone()).unwrap()
-                }
-            };
 
             std::thread::scope(|s| {
                 let _threads = channels
@@ -118,39 +106,20 @@ pub fn infer(model: impl AsRef<Path>, gpus: &[c_int], prompt: &str, max_steps: u
                         let dist = Distribution::new(i, 1, gpus.len());
                         s.spawn(move || launch_partial(llama, dist, nvoc, &kv_cache, channel))
                     })
-                    .collect::<Vec<_>>();
+                    .collect::<Box<_>>();
 
-                send_all(prompt_tokens);
-
-                let next = receiver.recv().unwrap();
-                send_all(smallvec![next]);
-                print_now!("{prompt}{}", tokeneer.decode(&[next]));
-
-                let mut duration = Duration::ZERO;
-                let mut steps = 1;
-                let mut time = Instant::now();
-                for next in receiver.into_iter().take(max_steps - 1) {
-                    duration += time.elapsed();
-                    if next == eos {
-                        break;
-                    }
-                    send_all(smallvec![next]);
-                    time = Instant::now();
-                    steps += 1;
-                    print_now!("{}", tokeneer.decode(&[next]))
-                }
-                drop(send_all);
-                (duration, steps)
+                service(
+                    requests,
+                    session,
+                    senders.into(),
+                    receiver,
+                    tokeneer,
+                    max_steps,
+                    eos,
+                )
             })
         }
-    };
-    let time = duration.div_f32(steps as _);
-    println!();
-    println!();
-    println!(
-        "steps = {steps}, perf: {time:?}/tok, {}tok/s",
-        Duration::from_secs(1).div_duration_f32(time),
-    )
+    }
 }
 
 struct KVCache {
@@ -413,4 +382,54 @@ fn launch_partial(
             }
         }
     })
+}
+
+fn service(
+    requests: Receiver<String>,
+    session: Sender<Receiver<String>>,
+    senders: Box<[Sender<SmallVec<[utok; 1]>>]>,
+    receiver: Receiver<utok>,
+    tokeneer: Tokeneer<Bpe>,
+    max_steps: usize,
+    eos: utok,
+) -> (Duration, usize) {
+    let mut duration = Duration::ZERO;
+    let mut steps = 1;
+
+    let send_all = move |next: SmallVec<[utok; 1]>| {
+        for sender in &senders {
+            sender.send(next.clone()).unwrap()
+        }
+    };
+
+    for prompt in requests {
+        // 回复接收通道
+        let (response, busy_session) = mpsc::channel();
+        session.send(busy_session).unwrap();
+        // 发送提示词
+        let prompt_tokens = SmallVec::from_vec(tokeneer.encode(&prompt));
+        send_all(prompt_tokens);
+        // 首轮不计时
+        let next = receiver.recv().unwrap();
+        send_all(smallvec![next]);
+        response.send(tokeneer.decode(&[next])).unwrap();
+        // 循环接收输出
+        let mut time = Instant::now();
+        for next in receiver.iter().take(max_steps - 1) {
+            duration += time.elapsed();
+            // 收到休止符
+            if next == eos {
+                break;
+            }
+            send_all(smallvec![next]);
+            time = Instant::now();
+            steps += 1;
+            // 会话拒绝输出
+            if let Err(SendError(_)) = response.send(tokeneer.decode(&[next])) {
+                break;
+            }
+        }
+    }
+
+    (duration, steps)
 }

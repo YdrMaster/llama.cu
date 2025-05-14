@@ -22,15 +22,6 @@ macro_rules! strides {
     };
 }
 
-macro_rules! print_now {
-    ($($arg:tt)*) => {{
-        use std::io::Write;
-
-        print!($($arg)*);
-        std::io::stdout().flush().unwrap();
-    }};
-}
-
 macro_rules! meta {
     ($gguf:expr => $key:ident) => {
         $gguf.$key().unwrap()
@@ -55,4 +46,4 @@ macro_rules! meta {
     };
 }
 
-pub(crate) use {destruct, dims, meta, print_now, strides};
+pub(crate) use {destruct, dims, meta, strides};
