@@ -124,28 +124,21 @@ impl HyperService<Request<Incoming>> for App {
     }
 }
 
+#[cfg(test)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_service() {
-    use hyper::header::CONTENT_TYPE;
-    use hyper::header::{HeaderMap, HeaderValue};
-    use std::collections::HashMap;
-    use std::env::var_os;
+    use hyper::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
+    use std::{collections::HashMap, env::var_os};
     use tokio::time::Duration;
     use tokio_stream::StreamExt;
+
     let Some(path) = var_os("TEST_MODEL") else {
         println!("TEST_MODE not set");
         return;
     };
     const PORT: u16 = 27000;
-    let gpus: Box<[c_int]> = vec![0].into();
-    const MAX_STEPS: usize = 100;
 
-    let _handle = tokio::spawn(start_infer_service(
-        PathBuf::from(path),
-        PORT,
-        gpus,
-        MAX_STEPS,
-    ));
+    let _handle = tokio::spawn(start_infer_service(path.into(), PORT, [0].into(), 100));
 
     {
         let client = reqwest::Client::new();
@@ -155,7 +148,7 @@ async fn test_service() {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         let req = client
-            .post(format!("http://127.0.0.1:{}/infer", PORT))
+            .post(format!("http://localhost:{PORT}/infer"))
             .headers(headers)
             .json(&map_outter);
 
