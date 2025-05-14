@@ -5,12 +5,12 @@ use std::{path::PathBuf, sync::LazyLock};
 #[derive(Args)]
 pub struct GenerateArgs {
     model: PathBuf,
-    #[clap(short, long)]
-    prompt: Option<String>,
-    #[clap(long)]
-    max_steps: Option<usize>,
     #[clap(long)]
     gpus: Option<String>,
+    #[clap(long)]
+    max_steps: Option<usize>,
+    #[clap(short, long)]
+    prompt: Option<String>,
 }
 
 macro_rules! print_now {

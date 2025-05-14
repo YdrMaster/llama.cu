@@ -46,6 +46,10 @@ impl BusySession<'_> {
     pub fn receive(&self) -> Option<String> {
         self.0.recv().ok()
     }
+
+    pub fn into_receiver(self) -> Receiver<String> {
+        self.0
+    }
 }
 
 impl Handle {
