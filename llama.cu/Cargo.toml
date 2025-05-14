@@ -4,7 +4,7 @@ version = "0.0.0"
 edition.workspace = true
 
 [dependencies]
-operators = { git = "https://github.com/YdrMaster/operators-rs", rev = "c4be5d0" }
+operators = { git = "https://github.com/YdrMaster/operators-rs", rev = "9c22154" }
 tokeneer = { git = "https://github.com/InfiniTensor/tokeneer", rev = "12c2d99" }
 regex.workspace = true
 memmap2 = "0.9"

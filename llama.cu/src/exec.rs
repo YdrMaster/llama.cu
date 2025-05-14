@@ -1,6 +1,6 @@
 ﻿use crate::{
     handle::{Attention, Exec, Handle},
-    memory::{AddrRegion, MemPages},
+    memory::MemPages,
     utils::{self, Blob, destruct, layout, offset_ptr},
 };
 use ggus::ggml_quants::f16;
@@ -8,7 +8,7 @@ use nn::Tensor;
 use operators::{
     Operator, TensorLayout,
     attention_kv_cached::{Args as AttnArgs, cuda::Operator as Attn},
-    cuda::{CurrentCtx, DevMem, HostMem, Stream, VirByte, memcpy_h2d},
+    cuda::{CurrentCtx, DevMem, HostMem, Stream, VirByte, VirMem, memcpy_h2d},
     random_sample::{
         Args as SampleArgs, Indices, KVPair, RandomSample, SampleArgs as Config,
         cuda::Operator as Sample,
@@ -20,7 +20,8 @@ use tensor::{digit_layout::types, ndarray_layout::ArrayLayout};
 pub struct ModelExec<'ctx> {
     n_tok: usize,
     execs: Box<[Exec<'ctx>]>,
-    workspace: AddrRegion,
+    workspace: VirMem,
+    workspace_mapped: bool,
     inputs: Box<[Tensor<*const VirByte, 2>]>,
     outputs: Box<[Tensor<*const VirByte, 2>]>,
 }
@@ -59,18 +60,19 @@ impl<'ctx> ModelExec<'ctx> {
         let exec = graph.into_exec();
 
         // memcpy node 要求当时虚地址有对应的物理页
-        pages.map(workspace.pages(..));
+        pages.map(&mut workspace, ..);
 
         // 构造 cuda graph
         let execs = handle.merge_cuda_graph(exec);
 
         // 解除映射回收物理页
-        pages.unmap(workspace.pages(..));
+        pages.unmap(&mut workspace, ..);
 
         Self {
             n_tok,
             execs,
             workspace,
+            workspace_mapped: false,
             inputs,
             outputs,
         }
@@ -87,7 +89,10 @@ impl<'ctx> ModelExec<'ctx> {
         config: Config,
         stream: &Stream,
     ) -> u32 {
-        pages.map(self.workspace.pages(..));
+        if !self.workspace_mapped {
+            self.workspace_mapped = true;
+            pages.map(&mut self.workspace, ..)
+        }
 
         let mut padding = vec![0; self.n_tok];
         padding[..tokens.len()].copy_from_slice(tokens);

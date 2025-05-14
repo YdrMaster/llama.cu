@@ -14,7 +14,7 @@ use nn::{
 use operators::{
     Operator,
     attention_kv_cached::cuda::Operator as Attn,
-    cuda::{self, Device, Gpu, VirMem},
+    cuda::{self, Device, Gpu},
     nccl::{Communicator, CommunicatorGroup},
     random_sample::{SampleArgs, cuda::Operator as Sample},
 };
@@ -176,8 +176,8 @@ fn launc_mono(
     }
     // 权重加载
     let mut pages = MemPages::new(&dev);
-    let page_size = pages.page_size();
-    let mut weight = VirMem::new(ranges.size().div_ceil(page_size) * page_size, 0).map_on(&dev);
+    let mut weight = pages.reserve_vir(ranges.size());
+    let mapped = weight.map(0, pages.prop().create(weight.len()));
     let edges = dev.context().apply(|ctx| {
         let mut loader = WeightLoader::new(
             ranges
@@ -187,15 +187,15 @@ fn launc_mono(
         );
 
         let stream = ctx.stream();
-        let mut mapped = HashSet::new();
+        let mut copied = HashSet::new();
         edges
             .into_iter()
             .map(|nn::Edge { meta, external }| nn::Edge {
                 meta,
                 external: external.map(|nn::External { name, item }| {
                     let range = &ranges[&item.get().as_ptr()];
-                    let dev = &mut weight[range.clone()];
-                    if mapped.insert(range.clone()) {
+                    let dev = &mut mapped[range.clone()];
+                    if copied.insert(range.clone()) {
                         loader.load(dev, &stream, |dst| dst.copy_from_slice(item.get()))
                     }
                     nn::External {
@@ -281,8 +281,8 @@ fn launch_partial(
     }
     // 权重加载
     let mut pages = MemPages::new(&dev);
-    let page_size = pages.page_size();
-    let mut weight = VirMem::new(ranges.size().div_ceil(page_size) * page_size, 0).map_on(&dev);
+    let mut weight = pages.reserve_vir(ranges.size());
+    let mapped = weight.map(0, pages.prop().create(weight.len()));
     let edges = dev.context().apply(|ctx| {
         let mut loader = WeightLoader::new(
             ranges
@@ -292,7 +292,7 @@ fn launch_partial(
         );
 
         let stream = ctx.stream();
-        let mut mapped = HashSet::new();
+        let mut copied = HashSet::new();
         edges
             .into_iter()
             .map(|nn::Edge { meta, external }| nn::Edge {
@@ -300,20 +300,20 @@ fn launch_partial(
                 external: external.map(|nn::External { name, item }| {
                     let TPTensor { act, val } = item;
                     let range = &ranges[&(act.clone(), val.get().as_ptr())];
-                    let dev = &mut weight[range.clone()];
+                    let dev = &mut mapped[range.clone()];
                     let ptr = dev.as_ptr().cast();
                     nn::External {
                         name,
                         item: match act.clone() {
                             Some(TPAction { wt, dist }) => {
-                                if mapped.insert(range.clone()) {
+                                if copied.insert(range.clone()) {
                                     loader.load(dev, &stream, |dst| wt.move_data(dist, dst, &val))
                                 }
                                 let shape = wt.split_shape(dist, val.shape());
                                 Tensor::from_dim_slice(val.dt(), &shape).map(|_| ptr)
                             }
                             None => {
-                                if mapped.insert(range.clone()) {
+                                if copied.insert(range.clone()) {
                                     loader.load(dev, &stream, |dst| dst.copy_from_slice(val.get()))
                                 }
                                 val.map(|_| ptr)

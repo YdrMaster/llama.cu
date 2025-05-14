@@ -281,7 +281,7 @@ checksum = "43da5946c66ffcc7745f48db692ffbb10a83bfe0afd96235c5c2a4fb23994929"
 [[package]]
 name = "cublas"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=17109a0#17109a0d5a5571342a003543b19dff592260976c"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=aaad2ba#aaad2ba126de63dc4f2a11ee62ea94c7e5b5e17c"
 dependencies = [
  "bindgen",
  "build-script-cfg 0.1.0",
@@ -294,7 +294,7 @@ dependencies = [
 [[package]]
 name = "cuda"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=17109a0#17109a0d5a5571342a003543b19dff592260976c"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=aaad2ba#aaad2ba126de63dc4f2a11ee62ea94c7e5b5e17c"
 dependencies = [
  "bindgen",
  "build-script-cfg 0.1.0",
@@ -729,9 +729,9 @@ dependencies = [
 
 [[package]]
 name = "mem-rearrange"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff2757f30b3eb45c3f99d3ee260c6b76041bf94ff3d152cf4dc2efd85908158f"
+checksum = "fc4bd17d49b8f7143e82e5448a6bdfb3d6cfb922c1e7cd7fc5264d56be633aff"
 dependencies = [
  "itertools 0.14.0",
  "ndarray-layout",
@@ -762,7 +762,7 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 [[package]]
 name = "nccl"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=17109a0#17109a0d5a5571342a003543b19dff592260976c"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=aaad2ba#aaad2ba126de63dc4f2a11ee62ea94c7e5b5e17c"
 dependencies = [
  "bindgen",
  "build-script-cfg 0.1.0",
@@ -850,7 +850,7 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 [[package]]
 name = "operators"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=c4be5d0#c4be5d0c4e721f71258e63007e2636c89f4e8393"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=9c22154#9c2215438c83cbcb4029d91ce8bc6b728362fc0b"
 dependencies = [
  "build-script-cfg 0.0.0",
  "clrt",
@@ -1074,12 +1074,12 @@ source = "git+https://github.com/InfiniTensor/clrt?rev=984ac7a#984ac7a2f6088d990
 [[package]]
 name = "search-corex-tools"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=17109a0#17109a0d5a5571342a003543b19dff592260976c"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=aaad2ba#aaad2ba126de63dc4f2a11ee62ea94c7e5b5e17c"
 
 [[package]]
 name = "search-cuda-tools"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=17109a0#17109a0d5a5571342a003543b19dff592260976c"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=aaad2ba#aaad2ba126de63dc4f2a11ee62ea94c7e5b5e17c"
 dependencies = [
  "find_cuda_helper",
 ]
