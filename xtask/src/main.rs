@@ -31,16 +31,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// 文本生成
+    /// text generation
     Generate(GenerateArgs),
-    /// 命令行对话
+    /// chat in console
     Chat(ChatArgs),
-    /// web 服务
+    /// web service
     Service(ServiceArgs),
 }
 
 #[derive(Args)]
-pub struct BaseArgs {
+struct BaseArgs {
     model: PathBuf,
     #[clap(long)]
     gpus: Option<String>,
@@ -49,7 +49,7 @@ pub struct BaseArgs {
 }
 
 impl BaseArgs {
-    pub fn gpus(&self) -> Box<[c_int]> {
+    fn gpus(&self) -> Box<[c_int]> {
         self.gpus
             .as_ref()
             .map(|devices| {
@@ -62,7 +62,7 @@ impl BaseArgs {
             .unwrap_or_else(|| vec![1].into())
     }
 
-    pub fn max_steps(&self) -> usize {
+    fn max_steps(&self) -> usize {
         self.max_steps.unwrap_or(1000)
     }
 }

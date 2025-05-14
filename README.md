@@ -22,9 +22,9 @@ cargo xtask help
 Usage: xtask <COMMAND>
 
 Commands:
-  generate  文本生成
-  chat      命令行对话
-  service   web 服务
+  generate  text generation
+  chat      chat in console
+  service   web service
   help      Print this message or the help of the given subcommand(s)
 
 Options:
@@ -45,7 +45,7 @@ cargo gen --help
 ```
 
 ```plaintext
-文本生成
+text generation
 
 Usage: xtask generate [OPTIONS] <MODEL>
 
@@ -67,7 +67,7 @@ cargo chat --help
 ```
 
 ```plaintext
-命令行对话
+chat in console
 
 Usage: xtask chat [OPTIONS] <MODEL>
 
@@ -87,7 +87,7 @@ cargo service --help
 ```
 
 ```plaintext
-web 服务
+web service
 
 Usage: xtask service [OPTIONS] --port <PORT> <MODEL>
 
