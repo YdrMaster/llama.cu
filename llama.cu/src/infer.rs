@@ -27,12 +27,9 @@ use std::{
 };
 use tokeneer::{Bpe, Tokeneer};
 
-pub(crate) fn infer(path: impl AsRef<Path>, prompt: &str) {
-    const NUM_DEV: usize = 4;
-    const MAX_STEPS: usize = 1000;
-
+pub fn infer(model: impl AsRef<Path>, gpus: &[i32], prompt: &str, max_steps: usize) {
     // 从文件加载权重
-    let maps = map_files(path);
+    let maps = map_files(model);
     let mut gguf = GGufModel::read(maps.iter().map(|x| &**x));
     insert_sin_cos(&mut gguf);
     let nvoc = meta![gguf => tokenizer_ggml_tokens].len();
@@ -41,10 +38,9 @@ pub(crate) fn infer(path: impl AsRef<Path>, prompt: &str) {
 
     assert!(cuda::init().is_ok());
 
-    let devlist: [i32; NUM_DEV] = std::array::from_fn(|i| i as _);
     let mut senders = Vec::new();
     let mut receiver = None;
-    let comms = CommunicatorGroup::new(&devlist);
+    let comms = CommunicatorGroup::new(&gpus);
     let channels = comms
         .into_vec()
         .into_iter()
@@ -72,7 +68,7 @@ pub(crate) fn infer(path: impl AsRef<Path>, prompt: &str) {
             .map(|(i, channel)| {
                 let llama = llama.clone();
                 let kv_cache = kv_cache.clone();
-                let dist = Distribution::new(i, 1, NUM_DEV);
+                let dist = Distribution::new(i, 1, gpus.len());
                 s.spawn(move || launch_partial(llama, dist, nvoc, &kv_cache, channel))
             })
             .collect::<Vec<_>>();
@@ -97,7 +93,7 @@ pub(crate) fn infer(path: impl AsRef<Path>, prompt: &str) {
         print_now!("{prompt}{}", tokeneer.decode(&[next]));
 
         let time = Instant::now();
-        for next in receiver.into_iter().take(MAX_STEPS) {
+        for next in receiver.into_iter().take(max_steps) {
             if next == eos {
                 break;
             }

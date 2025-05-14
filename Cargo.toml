@@ -1,15 +1,7 @@
-[package]
-name = "llama-cu"
-version = "0.0.0"
-edition = "2024"
+[workspace]
+members = ["llama.cu", "xtask"]
+resolver = "3"
+package.edition = "2024"
 
-[dependencies]
-operators = { git = "https://github.com/YdrMaster/operators-rs", rev = "c4be5d0" }
-tokeneer = { git = "https://github.com/InfiniTensor/tokeneer", rev = "12c2d99" }
-memmap2 = "0.9"
+[workspace.dependencies]
 regex = "1.11"
-rand = "0.9"
-nn = { git = "https://github.com/YdrMaster/InfiniNN", rev = "5b3a0f8" }
-graph = { git = "https://github.com/YdrMaster/InfiniNN", rev = "5b3a0f8" }
-ggus = { git = "https://github.com/InfiniTensor/gguf", rev = "23c362f" }
-tensor = { git = "https://github.com/YdrMaster/tensor", rev = "66450a9" }
