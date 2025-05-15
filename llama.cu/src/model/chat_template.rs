@@ -1,4 +1,4 @@
-﻿use crate::gguf::GGufModel;
+﻿use super::gguf::GGufModel;
 use ggus::{GGufMetaError, GGufMetaMapExt};
 use minijinja::Environment;
 use serde::Serialize;
@@ -9,14 +9,14 @@ use std::sync::{
 use tokeneer::{Method, Tokeneer};
 
 /// A template for rendering chat messages.
-pub struct ChatTemplate {
+pub(crate) struct ChatTemplate {
     id: String,
     bos: String,
     eos: String,
 }
 
 #[derive(Serialize)]
-pub struct Message<'a> {
+pub(crate) struct Message<'a> {
     pub role: &'a str,
     pub content: &'a str,
 }

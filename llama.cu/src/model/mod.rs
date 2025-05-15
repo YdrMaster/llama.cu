@@ -1,12 +1,48 @@
-﻿use crate::{
-    gguf::GGufModel,
-    utils::{Blob, Data, meta},
-};
+﻿mod chat_template;
+mod gguf;
+
+use crate::utils::{Blob, Data, meta};
+use ggus::GGufFileName;
 use ggus::GGufMetaMapExt;
+use memmap2::Mmap;
 use nn::{
     Activation, Attention, Embedding, LLaMA, Linear, Mlp, NormType, Normalization, OutputHead,
     RoPE, Table, Tensor, TransformerBlk, digit_layout::types,
 };
+use std::{fmt::Debug, fs::File, path::Path};
+
+pub(crate) use chat_template::Message;
+pub(crate) use gguf::GGufModel;
+
+/// 从指定文件的路径出发，映射所有分片文件。
+pub(crate) fn map_files(path: impl AsRef<Path>) -> Box<[Mmap]> {
+    fn throw(path: &Path, e: impl Debug) -> ! {
+        let path = path.display();
+        panic!(
+            "\
+Error occurred at path: {path}
+  error: {e:?}"
+        )
+    }
+
+    #[inline]
+    fn map_file(path: &Path) -> Mmap {
+        let file = File::open(path).unwrap_or_else(|e| throw(path, e));
+        unsafe { Mmap::map(&file) }.unwrap()
+    }
+
+    let path = path.as_ref();
+    let name = GGufFileName::try_from(path).unwrap_or_else(|e| throw(path, e));
+
+    if name.shard_count() == 1 {
+        Box::new([map_file(path)])
+    } else {
+        let dir = path.parent().unwrap();
+        name.iter_all()
+            .map(|name| map_file(&dir.join(name.to_string())))
+            .collect()
+    }
+}
 
 impl GGufModel<'_> {
     pub fn insert_sin_cos(&mut self) {

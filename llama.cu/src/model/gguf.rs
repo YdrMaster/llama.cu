@@ -1,44 +1,10 @@
 ﻿use crate::utils::Data;
-use ggus::{
-    GENERAL_ALIGNMENT, GGuf, GGufError, GGufFileName, GGufMetaDataValueType, GGufMetaKV,
-    GGufMetaMap,
-};
-use memmap2::Mmap;
+use ggus::{GENERAL_ALIGNMENT, GGuf, GGufError, GGufMetaDataValueType, GGufMetaKV, GGufMetaMap};
 use nn::Tensor;
-use std::{collections::HashMap, fmt::Debug, fs::File, path::Path, thread};
-
-/// 从指定文件的路径出发，映射所有分片文件。
-pub fn map_files(path: impl AsRef<Path>) -> Box<[Mmap]> {
-    fn throw(path: &Path, e: impl Debug) -> ! {
-        let path = path.display();
-        panic!(
-            "\
-Error occurred at path: {path}
-  error: {e:?}"
-        )
-    }
-
-    #[inline]
-    fn map_file(path: &Path) -> Mmap {
-        let file = File::open(path).unwrap_or_else(|e| throw(path, e));
-        unsafe { Mmap::map(&file) }.unwrap()
-    }
-
-    let path = path.as_ref();
-    let name = GGufFileName::try_from(path).unwrap_or_else(|e| throw(path, e));
-
-    if name.shard_count() == 1 {
-        Box::new([map_file(path)])
-    } else {
-        let dir = path.parent().unwrap();
-        name.iter_all()
-            .map(|name| map_file(&dir.join(name.to_string())))
-            .collect()
-    }
-}
+use std::{collections::HashMap, thread};
 
 /// GGuf 模型，可能来自多个分片文件。
-pub struct GGufModel<'a> {
+pub(crate) struct GGufModel<'a> {
     /// 元数据键值对。
     pub meta_kvs: HashMap<&'a str, GGufMetaKV<'a>>,
     /// 张量。

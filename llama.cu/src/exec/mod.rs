@@ -1,5 +1,6 @@
 ﻿mod model;
 mod output_head;
+mod task;
 
 use crate::{handle::Handle, memory::MemPages, upos};
 use model::ModelExec;

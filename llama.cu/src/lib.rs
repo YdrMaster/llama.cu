@@ -1,6 +1,4 @@
-mod chat_template;
 mod exec;
-mod gguf;
 mod handle;
 mod infer;
 mod load;

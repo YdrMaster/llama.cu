@@ -1,6 +1,9 @@
-﻿use super::{OutputHead, Request};
+﻿use super::{
+    OutputHead, Request,
+    task::{Attention, Task},
+};
 use crate::{
-    handle::{Attention, Exec, Handle},
+    handle::Handle,
     memory::MemPages,
     upos,
     utils::{self, destruct, layout, offset_ptr},
@@ -16,7 +19,7 @@ use tokeneer::utok;
 
 pub(super) struct ModelExec<'ctx> {
     n_tok: usize,
-    execs: Box<[Exec<'ctx>]>,
+    execs: Box<[Task<'ctx>]>,
     workspace: VirMem,
     inputs: Box<[Tensor<*const VirByte, 2>]>,
     outputs: Box<[Tensor<*const VirByte, 2>]>,
@@ -104,7 +107,7 @@ impl ModelExec<'_> {
         // 执行
         for exec in &self.execs {
             match exec {
-                Exec::Graph(graph, stub) => {
+                Task::Graph(graph, stub) => {
                     stream.launch_graph(graph);
                     if !stub.is_empty() {
                         for t in stub {
@@ -113,7 +116,7 @@ impl ModelExec<'_> {
                         std::process::exit(0);
                     }
                 }
-                Exec::Attention(box_) => {
+                Task::Attention(box_) => {
                     let Attention { iblk, q, k, v, o } = &**box_;
                     let mut start = 0;
                     for req in &requests {

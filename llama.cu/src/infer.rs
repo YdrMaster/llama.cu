@@ -1,10 +1,9 @@
 ﻿use crate::{
     Task,
-    chat_template::Message,
     exec::{ModelGroup, Request},
-    gguf::{GGufModel, map_files},
     handle::Handle,
     memory::{KVCache, MemPages},
+    model::{GGufModel, Message, map_files},
     upos,
     utils::meta,
 };
