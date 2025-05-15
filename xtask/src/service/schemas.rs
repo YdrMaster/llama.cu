@@ -4,11 +4,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Infer {
     pub prompt: String,
+    pub id: Option<String>,
 }
 
 #[derive(Debug)]
 pub(crate) enum Error {
     WrongJson(serde_json::Error),
+    NeedId,
 }
 
 #[derive(Serialize)]
@@ -23,6 +25,7 @@ impl Error {
     pub const fn status(&self) -> StatusCode {
         match self {
             Self::WrongJson(_) => StatusCode::BAD_REQUEST,
+            Self::NeedId => StatusCode::BAD_REQUEST,
         }
     }
 
@@ -45,6 +48,7 @@ impl Error {
 
         match self {
             Self::WrongJson(e) => json(error!(0, e.to_string())),
+            Self::NeedId => json(error!(1, "Need an ID for multi-session service")),
         }
     }
 }
