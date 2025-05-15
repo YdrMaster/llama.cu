@@ -1,12 +1,13 @@
 ﻿use super::{
-    OutputHead, Request,
-    task::{Attention, Task},
+    group::Request,
+    output_head::OutputHead,
+    step::{Attention, Step},
 };
 use crate::{
     handle::Handle,
     memory::MemPages,
     upos,
-    utils::{self, destruct, layout, offset_ptr},
+    utils::{self, cast_slice_mut, destruct, layout, offset_ptr},
 };
 use nn::{NNGraph, Tensor};
 use operators::{
@@ -19,7 +20,7 @@ use tokeneer::utok;
 
 pub(super) struct ModelExec<'ctx> {
     n_tok: usize,
-    execs: Box<[Task<'ctx>]>,
+    execs: Box<[Step<'ctx>]>,
     workspace: VirMem,
     inputs: Box<[Tensor<*const VirByte, 2>]>,
     outputs: Box<[Tensor<*const VirByte, 2>]>,
@@ -90,11 +91,11 @@ impl ModelExec<'_> {
         attn: &Attn,
         handle: &mut Handle,
         output_head: &mut OutputHead,
-        requests: Box<[Request]>,
+        reqs: Box<[Request]>,
         stream: &Stream<'ctx>,
     ) -> DevMem<'ctx> {
         // 初始化输入
-        let (n_out, [padding, pos, out_idx]) = fill_inputs(self.n_tok, &requests, stream.ctx());
+        let (n_out, [padding, pos, out_idx]) = fill_inputs(self.n_tok, &reqs, stream.ctx());
 
         // 拷贝到硬件
         for (input, data) in zip(&self.inputs, [padding, pos]) {
@@ -107,7 +108,7 @@ impl ModelExec<'_> {
         // 执行
         for exec in &self.execs {
             match exec {
-                Task::Graph(graph, stub) => {
+                Step::Graph(graph, stub) => {
                     stream.launch_graph(graph);
                     if !stub.is_empty() {
                         for t in stub {
@@ -116,10 +117,10 @@ impl ModelExec<'_> {
                         std::process::exit(0);
                     }
                 }
-                Task::Attention(box_) => {
+                Step::Attention(box_) => {
                     let Attention { iblk, q, k, v, o } = &**box_;
                     let mut start = 0;
-                    for req in &requests {
+                    for req in &reqs {
                         // [nkvh, 2, nctx, dh]
                         let cache = req.kv_cache.clone();
                         let cache = cache.transform(|layout| layout.index(1, *iblk));
@@ -162,8 +163,7 @@ impl ModelExec<'_> {
             x,
             out_idx,
             n_out,
-            requests
-                .iter()
+            reqs.iter()
                 .flat_map(|req| std::iter::repeat_n(req.sample_args, req.out)),
             handle,
             stream,
@@ -174,7 +174,7 @@ impl ModelExec<'_> {
 /// 构造输入数据
 fn fill_inputs<'ctx>(
     n_tok: usize,
-    requests: &[Request],
+    reqs: &[Request],
     ctx: &'ctx CurrentCtx,
 ) -> (usize, [HostMem<'ctx>; 3]) {
     let mut ans0 = ctx.malloc_host::<utok>(n_tok);
@@ -186,7 +186,7 @@ fn fill_inputs<'ctx>(
     let out_idx: &mut [utok] = cast_slice_mut(&mut ans2);
     let mut itok = 0;
     let mut iout = 0;
-    for req in requests {
+    for req in reqs {
         let seq_len = req.tokens.len();
         for (j, &tok) in req.tokens.iter().enumerate() {
             if j >= seq_len - req.out {
@@ -203,11 +203,4 @@ fn fill_inputs<'ctx>(
     pos[itok..].fill(0);
 
     (iout, [ans0, ans1, ans2])
-}
-
-fn cast_slice_mut<T: Copy, U: Copy>(slice: &mut [T]) -> &mut [U] {
-    let ([], ans, []) = (unsafe { slice.align_to_mut() }) else {
-        panic!()
-    };
-    ans
 }

@@ -8,7 +8,7 @@ use operators::cuda::{GraphExec, VirByte};
 use regex::Regex;
 use std::sync::LazyLock;
 
-pub(super) enum Task<'ctx> {
+pub(super) enum Step<'ctx> {
     Graph(GraphExec<'ctx>, Box<[Tensor<*const VirByte, 2>]>),
     Attention(Box<Attention>),
 }
@@ -25,7 +25,7 @@ impl<'ctx> Handle<'ctx> {
     pub(super) fn merge_cuda_graph(
         &mut self,
         exec: impl IntoIterator<Item = nn::Exec<*const VirByte>>,
-    ) -> Box<[Task<'ctx>]> {
+    ) -> Box<[Step<'ctx>]> {
         let mut stream = None;
         let mut exec_ = Vec::new();
         for nn::Exec {
@@ -60,7 +60,7 @@ impl<'ctx> Handle<'ctx> {
                         LazyLock::new(|| Regex::new(r"^Ω\.blk(\d+)\.attn:attention$").unwrap());
 
                     if let Some(stream) = stream.take() {
-                        exec_.push(Task::Graph(
+                        exec_.push(Step::Graph(
                             self.ctx.instantiate(&stream.end()),
                             Default::default(),
                         ))
@@ -89,7 +89,7 @@ impl<'ctx> Handle<'ctx> {
                         let (_, [iblk]) = REGEX.captures(&node.name).unwrap().extract();
                         iblk.parse().unwrap()
                     };
-                    exec_.push(Task::Attention(Box::new(Attention { iblk, q, k, v, o })))
+                    exec_.push(Step::Attention(Box::new(Attention { iblk, q, k, v, o })))
                 }
                 _ => {
                     print!("todo! {} ({:?})", op.name, op.arg);
@@ -106,7 +106,7 @@ impl<'ctx> Handle<'ctx> {
             }
         }
         if let Some(stream) = stream.take() {
-            exec_.push(Task::Graph(
+            exec_.push(Step::Graph(
                 self.ctx.instantiate(&stream.end()),
                 Default::default(),
             ))

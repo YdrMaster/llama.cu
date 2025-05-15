@@ -72,3 +72,24 @@ impl Drop for Handle {
         )
     }
 }
+
+// pub struct Service {
+//     handle: Handle,
+//     commands: Sender<Command>,
+//     responses: Receiver<Response>,
+// }
+
+// pub enum Command {}
+// pub enum Response {}
+
+// struct Cache {
+//     history: History,
+//     kv_cache: KVCache,
+// }
+
+// struct History(Vec<Piece>);
+
+// struct Piece {
+//     text: String,
+//     tokens: SmallVec<[u32; 1]>,
+// }

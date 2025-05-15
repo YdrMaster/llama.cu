@@ -1,8 +1,8 @@
 ﻿use crate::{
     Task,
-    exec::{ModelGroup, Request},
+    exec::{KVCache, ModelGroup, Request},
     handle::Handle,
-    memory::{KVCache, MemPages},
+    memory::MemPages,
     model::{GGufModel, Message, map_files},
     upos,
     utils::meta,
@@ -138,7 +138,8 @@ fn builder() -> GraphBuilder {
         .register_op("attention", nn_op::attention::Attention)
         .register_op("swiglu", nn_op::activation::SwiGLU)
         .register_op("concat", nn_op::concat::Concat)
-        .register_op("split", nn_op::split::Split);
+        .register_op("split", nn_op::split::Split)
+        .register_op("all-reduce", nn_op::all_reduce::AllReduce);
     ans
 }
 
@@ -148,24 +149,24 @@ fn launc_mono(
     template: &Tensor<usize, 2>,
     channel: MonoChannel,
 ) {
-    let output_head = llama.output_head.take().unwrap();
     let MonoChannel { dev, tokens, next } = channel;
-    let builder = builder();
-    // 构造图表示
-    let NNGraph(Graph { topo, nodes, edges }) = builder
+    let dist = Distribution::MONO;
+
+    let output_head = llama.output_head.take().unwrap();
+    let NNGraph(Graph { topo, nodes, edges }) = builder()
         .build(
-            llama.tensor_parallel(Distribution::MONO),
+            llama.tensor_parallel(dist),
             [
                 TensorMeta::new(types::U32, [Dim::var("n_tok")]),
                 TensorMeta::new(types::U32, [Dim::var("n_tok")]),
             ],
         )
         .unwrap();
+
     // 权重加载
     let mut pages = MemPages::new(dev);
     let (_weight, edges) = pages.load_weight(edges);
-    // 创建 kv cache
-    let mut kv_cache = KVCache::new(template, Distribution::MONO, &mut pages);
+
     // 推理
     let graph = NNGraph(Graph { topo, nodes, edges });
     let gpu = Gpu::new(pages.dev().context(), Default::default());
@@ -184,6 +185,9 @@ fn launc_mono(
         );
 
         let mut kv_pair_host = ctx.malloc_host::<KVPair<()>>(1);
+
+        // 创建 kv cache
+        let mut kv_cache = KVCache::new(template, Distribution::MONO, &mut pages);
 
         let stream = ctx.stream();
         let mut pos = 0;
@@ -220,13 +224,11 @@ fn launch_partial(
     template: &Tensor<usize, 2>,
     channel: Channel,
 ) {
-    let output_head = llama.output_head.take().unwrap();
     let Channel { comm, tokens, next } = channel;
     let dev = comm.device();
-    let mut builder = builder();
-    builder.register_op("all-reduce", nn_op::all_reduce::AllReduce);
-    // 构造图表示
-    let NNGraph(Graph { topo, nodes, edges }) = builder
+
+    let output_head = llama.output_head.take().unwrap();
+    let NNGraph(Graph { topo, nodes, edges }) = builder()
         .build(
             llama.tensor_parallel(dist),
             [
@@ -235,11 +237,11 @@ fn launch_partial(
             ],
         )
         .unwrap();
+
     // 权重加载
     let mut pages = MemPages::new(dev);
     let (_weight, edges) = pages.load_weight(edges);
-    // 创建 kv cache
-    let mut kv_cache = KVCache::new(template, dist, &mut pages);
+
     // 推理
     let graph = NNGraph(Graph { topo, nodes, edges });
     let gpu = Gpu::new(pages.dev().retain_primary(), Default::default());
@@ -258,6 +260,9 @@ fn launch_partial(
         );
 
         let mut kv_pair_host = ctx.malloc_host::<KVPair<()>>(1);
+
+        // 创建 kv cache
+        let mut kv_cache = KVCache::new(template, dist, &mut pages);
 
         let stream = ctx.stream();
         let mut pos = 0;
