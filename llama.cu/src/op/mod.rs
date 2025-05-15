@@ -3,6 +3,7 @@
 mod all_reduce;
 mod embedding;
 mod linear;
+mod random_sample;
 mod rms_norm;
 mod rope;
 mod swiglu;
