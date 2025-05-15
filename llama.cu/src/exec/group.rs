@@ -1,22 +1,21 @@
 ﻿use super::{model::ModelExec, output_head::OutputHead};
-use crate::{handle::Handle, memory::MemPages, upos};
+use crate::{handle::Handle, memory::MemPages};
 use nn::{NNGraph, Tensor};
 use operators::{
     attention_kv_cached::cuda::Operator as Attn,
     cuda::{DevMem, Stream, VirByte},
     random_sample::{SampleArgs, cuda::Operator as Sample},
 };
-use smallvec::SmallVec;
 use std::{collections::BTreeMap, num::NonZeroUsize};
 use tokeneer::utok;
 
 #[derive(Clone)]
 pub(crate) struct Request {
-    pub sample_args: SampleArgs,
-    pub tokens: SmallVec<[utok; 1]>,
     pub kv_cache: Tensor<*const VirByte, 2>,
-    pub pos: upos,
+    pub pos: usize,
+    pub seq: usize,
     pub out: usize,
+    pub sample_args: SampleArgs,
 }
 
 pub(crate) struct ModelGroup<'ctx> {
@@ -54,7 +53,8 @@ impl<'ctx> ModelGroup<'ctx> {
 
     pub fn launch(
         &mut self,
-        reqs: Box<[Request]>,
+        toks: &[utok],
+        reqs: &[Request],
         handle: &mut Handle,
         pages: &mut MemPages,
         stream: &Stream<'ctx>,
@@ -66,7 +66,7 @@ impl<'ctx> ModelGroup<'ctx> {
             output_head,
         } = self;
 
-        let Some(len) = NonZeroUsize::new(reqs.iter().map(|req| req.tokens.len()).sum()) else {
+        let Some(len) = NonZeroUsize::new(toks.len()) else {
             return stream.malloc::<u8>(0);
         };
 
@@ -87,6 +87,6 @@ impl<'ctx> ModelGroup<'ctx> {
             *mapped = Some(key);
             model.map(pages)
         }
-        model.launch(attn, handle, output_head, reqs, stream)
+        model.launch(attn, handle, output_head, toks, reqs, stream)
     }
 }

@@ -194,15 +194,15 @@ fn launc_mono(
             let len = tokens.len();
             kv_cache.update(pos + len, &mut pages);
 
-            let request = Request {
-                sample_args: SampleArgs::ARG_MAX,
-                tokens,
+            let req = Request {
                 kv_cache: kv_cache.as_tensor().clone(),
-                pos: pos as _,
+                pos,
+                seq: tokens.len(),
                 out: 1,
+                sample_args: SampleArgs::ARG_MAX,
             };
 
-            let kv_pair = models.launch([request].into(), &mut handle, &mut pages, &stream);
+            let kv_pair = models.launch(&tokens, &[req], &mut handle, &mut pages, &stream);
             stream
                 .memcpy_d2h(&mut kv_pair_host, &kv_pair)
                 .synchronize()
@@ -268,15 +268,15 @@ fn launch_partial(
             let len = tokens.len();
             kv_cache.update(pos + len, &mut pages);
 
-            let request = Request {
-                sample_args: SampleArgs::ARG_MAX,
-                tokens,
+            let req = Request {
                 kv_cache: kv_cache.as_tensor().clone(),
-                pos: pos as _,
+                pos,
+                seq: tokens.len(),
                 out: 1,
+                sample_args: SampleArgs::ARG_MAX,
             };
 
-            let kv_pair = models.launch([request].into(), &mut handle, &mut pages, &stream);
+            let kv_pair = models.launch(&tokens, &[req], &mut handle, &mut pages, &stream);
             if let Some(next) = &next {
                 stream
                     .memcpy_d2h(&mut kv_pair_host, &kv_pair)

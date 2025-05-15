@@ -91,11 +91,12 @@ impl ModelExec<'_> {
         attn: &Attn,
         handle: &mut Handle,
         output_head: &mut OutputHead,
-        reqs: Box<[Request]>,
+        toks: &[utok],
+        reqs: &[Request],
         stream: &Stream<'ctx>,
     ) -> DevMem<'ctx> {
         // 初始化输入
-        let (n_out, [padding, pos, out_idx]) = fill_inputs(self.n_tok, &reqs, stream.ctx());
+        let (n_out, [padding, pos, out_idx]) = fill_inputs(self.n_tok, toks, reqs, stream.ctx());
 
         // 拷贝到硬件
         for (input, data) in zip(&self.inputs, [padding, pos]) {
@@ -120,14 +121,14 @@ impl ModelExec<'_> {
                 Step::Attention(box_) => {
                     let Attention { iblk, q, k, v, o } = &**box_;
                     let mut start = 0;
-                    for req in &reqs {
+                    for req in reqs {
                         // [nkvh, 2, nctx, dh]
                         let cache = req.kv_cache.clone();
                         let cache = cache.transform(|layout| layout.index(1, *iblk));
                         let k_cache = cache.clone().transform(|layout| layout.index(1, 0));
                         let v_cache = cache.clone().transform(|layout| layout.index(1, 1));
                         // [nh, n, dh]
-                        let len = req.tokens.len();
+                        let len = req.seq;
                         let q = q.clone().transform(|layout| layout.slice(1, start, 1, len));
                         let k = k.clone().transform(|layout| layout.slice(1, start, 1, len));
                         let v = v.clone().transform(|layout| layout.slice(1, start, 1, len));
@@ -173,13 +174,14 @@ impl ModelExec<'_> {
 
 /// 构造输入数据
 fn fill_inputs<'ctx>(
-    n_tok: usize,
+    padding: usize,
+    toks: &[utok],
     reqs: &[Request],
     ctx: &'ctx CurrentCtx,
 ) -> (usize, [HostMem<'ctx>; 3]) {
-    let mut ans0 = ctx.malloc_host::<utok>(n_tok);
-    let mut ans1 = ctx.malloc_host::<upos>(n_tok);
-    let mut ans2 = ctx.malloc_host::<utok>(n_tok);
+    let mut ans0 = ctx.malloc_host::<utok>(padding);
+    let mut ans1 = ctx.malloc_host::<upos>(padding);
+    let mut ans2 = ctx.malloc_host::<utok>(padding);
 
     let tokens: &mut [utok] = cast_slice_mut(&mut ans0);
     let pos: &mut [upos] = cast_slice_mut(&mut ans1);
@@ -187,18 +189,17 @@ fn fill_inputs<'ctx>(
     let mut itok = 0;
     let mut iout = 0;
     for req in reqs {
-        let seq_len = req.tokens.len();
-        for (j, &tok) in req.tokens.iter().enumerate() {
-            if j >= seq_len - req.out {
+        for i in 0..req.seq {
+            if i >= req.seq - req.out {
                 out_idx[iout] = itok as _;
                 iout += 1
             }
 
-            tokens[itok] = tok;
-            pos[itok] = req.pos + j as upos;
-            itok += 1;
+            pos[itok] = (req.pos + i) as _;
+            itok += 1
         }
     }
+    tokens[..itok].copy_from_slice(toks);
     tokens[itok..].fill(0);
     pos[itok..].fill(0);
 
