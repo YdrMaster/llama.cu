@@ -1,7 +1,7 @@
 ﻿use crate::{
     Task,
     chat_template::Message,
-    exec::{ModelExec, OutputHead, Request},
+    exec::{ModelGroup, Request},
     gguf::{GGufModel, map_files},
     handle::Handle,
     memory::{KVCache, MemPages},
@@ -18,7 +18,6 @@ use operators::{
 };
 use smallvec::{SmallVec, smallvec};
 use std::{
-    collections::BTreeMap,
     ffi::c_int,
     path::Path,
     sync::mpsc::{self, Receiver, SendError, Sender},
@@ -41,7 +40,6 @@ pub fn infer(
     let mut gguf = GGufModel::read(maps.iter().map(|x| &**x));
     gguf.insert_sin_cos();
     // 调取重要配置
-    let nvoc = meta![gguf => tokenizer_ggml_tokens].len();
     let llama = gguf.llama();
     let kv_cache = gguf.kv_cache();
 
@@ -58,7 +56,7 @@ pub fn infer(
             };
 
             std::thread::scope(|s| {
-                let _thread = s.spawn(move || launc_mono(llama, nvoc, &kv_cache, channel));
+                let _thread = s.spawn(move || launc_mono(llama, &kv_cache, channel));
 
                 service(
                     requests,
@@ -102,7 +100,7 @@ pub fn infer(
                         let llama = llama.clone();
                         let kv_cache = kv_cache.clone();
                         let dist = Distribution::new(i, 1, gpus.len());
-                        s.spawn(move || launch_partial(llama, dist, nvoc, &kv_cache, channel))
+                        s.spawn(move || launch_partial(llama, dist, &kv_cache, channel))
                     })
                     .collect::<Box<_>>();
 
@@ -148,7 +146,6 @@ fn builder() -> GraphBuilder {
 /// 单卡启动
 fn launc_mono(
     mut llama: LLaMA<Tensor<&[u8], 2>>,
-    nvoc: usize,
     template: &Tensor<usize, 2>,
     channel: MonoChannel,
 ) {
@@ -177,42 +174,33 @@ fn launc_mono(
     let sample = Sample::new(&gpu);
     gpu.apply(|ctx| {
         let mut handle = Handle::new(ctx);
-        let mut models = [1, 8, 32, 64]
-            .into_iter()
-            .map(|n_tok| {
-                (
-                    n_tok,
-                    ModelExec::new(graph.clone(), n_tok, &mut handle, &mut pages),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
+        let mut models = ModelGroup::new(
+            [1, 8, 16, 32, 64],
+            &graph,
+            output_head,
+            attn,
+            sample,
+            &mut handle,
+            &mut pages,
+        );
 
         let mut kv_pair_host = ctx.malloc_host::<KVPair<()>>(1);
 
         let stream = ctx.stream();
-        let mut output_head = OutputHead::new(output_head, sample, ctx, nvoc);
         let mut pos = 0;
         for tokens in tokens {
             let len = tokens.len();
-            let (to_cache, model) = models.range_mut(len..).next().unwrap();
-            kv_cache.prepare(pos as usize + to_cache, &mut pages);
+            kv_cache.prepare(pos as usize + len, &mut pages);
 
             let request = Request {
-                config: SampleArgs::new(1.2, 0.5, 1000).unwrap(),
+                sample_args: SampleArgs::new(1.2, 0.5, 1000).unwrap(),
                 tokens,
                 kv_cache: kv_cache.as_tensor().clone(),
                 pos,
                 out: 1,
             };
 
-            let kv_pair = model.launch(
-                &attn,
-                &mut handle,
-                &mut pages,
-                &mut output_head,
-                [request].into(),
-                &stream,
-            );
+            let kv_pair = models.launch([request].into(), &mut handle, &mut pages, &stream);
             pos += len as upos;
             stream
                 .memcpy_d2h(&mut kv_pair_host, &kv_pair)
@@ -230,7 +218,6 @@ fn launc_mono(
 fn launch_partial(
     mut llama: LLaMA<Tensor<&[u8], 2>>,
     dist: Distribution,
-    nvoc: usize,
     template: &Tensor<usize, 2>,
     channel: Channel,
 ) {
@@ -261,42 +248,33 @@ fn launch_partial(
     let sample = Sample::new(&gpu);
     gpu.apply(|ctx| {
         let mut handle = Handle::with_comm(ctx, comm);
-        let mut models = [1, 8, 32, 64]
-            .into_iter()
-            .map(|n_tok| {
-                (
-                    n_tok,
-                    ModelExec::new(graph.clone(), n_tok, &mut handle, &mut pages),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
+        let mut models = ModelGroup::new(
+            [1, 8, 16, 32, 64],
+            &graph,
+            output_head,
+            attn,
+            sample,
+            &mut handle,
+            &mut pages,
+        );
 
         let mut kv_pair_host = ctx.malloc_host::<KVPair<()>>(1);
 
         let stream = ctx.stream();
-        let mut output_head = OutputHead::new(output_head, sample, ctx, nvoc);
         let mut pos = 0;
         for tokens in tokens {
             let len = tokens.len();
-            let (to_cache, model) = models.range_mut(len..).next().unwrap();
-            kv_cache.prepare(pos as usize + to_cache, &mut pages);
+            kv_cache.prepare(pos as usize + len, &mut pages);
 
             let request = Request {
-                config: SampleArgs::new(1.2, 0.5, 1000).unwrap(),
+                sample_args: SampleArgs::new(1.2, 0.5, 1000).unwrap(),
                 tokens,
                 kv_cache: kv_cache.as_tensor().clone(),
                 pos,
                 out: 1,
             };
 
-            let kv_pair = model.launch(
-                &attn,
-                &mut handle,
-                &mut pages,
-                &mut output_head,
-                [request].into(),
-                &stream,
-            );
+            let kv_pair = models.launch([request].into(), &mut handle, &mut pages, &stream);
             pos += len as upos;
             if let Some(next) = &next {
                 stream
