@@ -3,7 +3,7 @@ mod exec;
 mod gguf;
 mod handle;
 mod infer;
-mod loader;
+mod load;
 mod memory;
 mod model;
 mod op;

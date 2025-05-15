@@ -85,7 +85,7 @@ dependencies = [
 [[package]]
 name = "arg"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=5b3a0f8#5b3a0f8199349e55e2dce3db913c646f2333c6be"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=481673f#481673f507beca5398fc6f75698d664e4dc9a79b"
 
 [[package]]
 name = "atomic-waker"
@@ -157,9 +157,9 @@ checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
 name = "bitflags"
-version = "2.9.0"
+version = "2.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c8214115b7bf84099f1309324e63141d4c5d7cc26862f97a0a857dbefe165bd"
+checksum = "1b8e56985ec62d17e9c1001dc89c88ecd7dc08e47eba5ec7c29c7b5eeecde967"
 
 [[package]]
 name = "build-script-cfg"
@@ -399,7 +399,7 @@ dependencies = [
 [[package]]
 name = "exec"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=5b3a0f8#5b3a0f8199349e55e2dce3db913c646f2333c6be"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=481673f#481673f507beca5398fc6f75698d664e4dc9a79b"
 dependencies = [
  "arg",
  "graph",
@@ -599,7 +599,7 @@ checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
 [[package]]
 name = "graph"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=5b3a0f8#5b3a0f8199349e55e2dce3db913c646f2333c6be"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=481673f#481673f507beca5398fc6f75698d664e4dc9a79b"
 dependencies = [
  "bit-set",
 ]
@@ -999,7 +999,7 @@ dependencies = [
 [[package]]
 name = "mem"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=5b3a0f8#5b3a0f8199349e55e2dce3db913c646f2333c6be"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=481673f#481673f507beca5398fc6f75698d664e4dc9a79b"
 dependencies = [
  "arg",
  "exec",
@@ -1120,7 +1120,7 @@ checksum = "86a1db1a5ed8293057d401ebd96872cb881a3693d9b55379ae320f652aea3714"
 [[package]]
 name = "nn"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=5b3a0f8#5b3a0f8199349e55e2dce3db913c646f2333c6be"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=481673f#481673f507beca5398fc6f75698d664e4dc9a79b"
 dependencies = [
  "arg",
  "digit-layout",

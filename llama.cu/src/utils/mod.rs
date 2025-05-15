@@ -1,7 +1,6 @@
 ﻿mod blob;
 mod fmt;
 mod macros;
-mod range_collector;
 
 use nn::Tensor;
 use operators::TensorLayout;
@@ -9,7 +8,6 @@ use operators::TensorLayout;
 pub(crate) use blob::{Blob, Data};
 pub(crate) use fmt::fmt;
 pub(crate) use macros::*;
-pub(crate) use range_collector::RangeCollector;
 
 pub(crate) fn layout<T, const N: usize>(t: &Tensor<T, N>) -> TensorLayout {
     TensorLayout {

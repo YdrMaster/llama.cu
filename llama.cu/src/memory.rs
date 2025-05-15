@@ -50,27 +50,41 @@ impl KVCache {
 }
 
 pub(crate) struct MemPages {
+    dev: Device,
     prop: MemProp,
     size: usize,
     pool: Vec<Arc<PhyMem>>,
 }
 
 impl MemPages {
-    pub fn new(dev: &Device) -> Self {
+    pub fn new(dev: Device) -> Self {
         let prop = dev.mem_prop();
         let size = prop.granularity_minimum();
         let pool = Vec::new();
-        Self { prop, size, pool }
+        Self {
+            dev,
+            prop,
+            size,
+            pool,
+        }
     }
 
-    pub const fn page_size(&self) -> usize {
-        self.size
+    #[inline(always)]
+    pub const fn dev(&self) -> &Device {
+        &self.dev
     }
 
+    #[inline(always)]
     pub const fn prop(&self) -> MemProp {
         self.prop
     }
 
+    #[inline(always)]
+    pub const fn page_size(&self) -> usize {
+        self.size
+    }
+
+    #[inline(always)]
     pub fn reserve_vir(&self, len: usize) -> VirMem {
         VirMem::new(len.div_ceil(self.size) * self.size, 0)
     }

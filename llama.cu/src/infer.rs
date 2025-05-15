@@ -4,10 +4,8 @@
     exec::{ModelExec, OutputHead},
     gguf::{GGufModel, map_files},
     handle::Handle,
-    loader::WeightLoader,
     memory::{KVCache, MemPages},
-    model::{self, insert_sin_cos},
-    utils::{RangeCollector, meta},
+    utils::meta,
 };
 use ggus::{GGufMetaMapExt, ggml_quants::digit_layout::types};
 use nn::{Dim, Distribution, GraphBuilder, LLaMA, Tensor, TensorMeta, op as nn_op};
@@ -19,7 +17,6 @@ use operators::{
 };
 use smallvec::{SmallVec, smallvec};
 use std::{
-    collections::HashSet,
     ffi::c_int,
     path::Path,
     sync::mpsc::{self, Receiver, SendError, Sender},
@@ -28,10 +25,7 @@ use std::{
 use tokeneer::{Bpe, utok};
 
 #[cfg(nccl)]
-use {
-    nn::{TPAction, TPTensor},
-    operators::nccl::{Communicator, CommunicatorGroup},
-};
+use operators::nccl::{Communicator, CommunicatorGroup};
 
 pub fn infer(
     model: impl AsRef<Path>,
@@ -43,11 +37,11 @@ pub fn infer(
     // 从文件加载权重
     let maps = map_files(model);
     let mut gguf = GGufModel::read(maps.iter().map(|x| &**x));
-    insert_sin_cos(&mut gguf);
+    gguf.insert_sin_cos();
     // 调取重要配置
     let nvoc = meta![gguf => tokenizer_ggml_tokens].len();
-    let llama = model::init(&gguf);
-    let kv_cache = model::kv_cache(&gguf);
+    let llama = gguf.llama();
+    let kv_cache = gguf.kv_cache();
 
     assert!(cuda::init().is_ok());
     let (next, receiver) = mpsc::channel();
@@ -157,10 +151,11 @@ fn launc_mono(
     channel: MonoChannel,
 ) {
     let MonoChannel { dev, tokens, next } = channel;
+    let builder = builder();
     // 构造图表示
-    let nn::Graph(graph::Graph { topo, nodes, edges }) = builder()
+    let nn::Graph(graph::Graph { topo, nodes, edges }) = builder
         .build(
-            llama,
+            llama.tensor_parallel(Distribution::MONO),
             [
                 TensorMeta::new(types::U32, [Dim::var("n_tok")]),
                 TensorMeta::new(types::U32, [Dim::var("n_tok")]),
@@ -168,51 +163,14 @@ fn launc_mono(
             ],
         )
         .unwrap();
-    // 排布权重存储
-    let align = Some(dev.alignment()).filter(|&n| n > 0).unwrap_or(512);
-    let mut ranges = RangeCollector::new(align);
-    for nn::Edge { external, .. } in &edges {
-        if let Some(nn::External { item, .. }) = external {
-            ranges.insert(item.get().as_ptr(), item.get().len())
-        }
-    }
     // 权重加载
-    let mut pages = MemPages::new(&dev);
-    let mut weight = pages.reserve_vir(ranges.size());
-    let mapped = weight.map(0, pages.prop().create(weight.len()));
-    let edges = dev.context().apply(|ctx| {
-        let mut loader = WeightLoader::new(
-            ranges
-                .sizes()
-                .filter(|&(_, times)| times < 4)
-                .map(|(size, _)| size),
-        );
-
-        let stream = ctx.stream();
-        let mut copied = HashSet::new();
-        edges
-            .into_iter()
-            .map(|nn::Edge { meta, external }| nn::Edge {
-                meta,
-                external: external.map(|nn::External { name, item }| {
-                    let range = &ranges[&item.get().as_ptr()];
-                    let dev = &mut mapped[range.clone()];
-                    if copied.insert(range.clone()) {
-                        loader.load(dev, &stream, |dst| dst.copy_from_slice(item.get()))
-                    }
-                    nn::External {
-                        name,
-                        item: item.map(|_| dev.as_ptr().cast()),
-                    }
-                }),
-            })
-            .collect::<Box<_>>()
-    });
+    let mut pages = MemPages::new(dev);
+    let (_weight, edges) = pages.load_weight(edges);
     // 创建 kv cache
     let mut kv_cache = KVCache::new(template, Distribution::MONO, &mut pages);
     // 推理
     let graph = nn::Graph(graph::Graph { topo, nodes, edges });
-    let gpu = Gpu::new(dev.context(), Default::default());
+    let gpu = Gpu::new(pages.dev().context(), Default::default());
     let attn = Attn::new(&gpu);
     let sample = Sample::new(&gpu);
     gpu.apply(|ctx| {
@@ -257,9 +215,10 @@ fn launch_partial(
 ) {
     let Channel { comm, tokens, next } = channel;
     let dev = comm.device();
+    let mut builder = builder();
+    builder.register_op("all-reduce", nn_op::all_reduce::AllReduce);
     // 构造图表示
-    let nn::Graph(graph::Graph { topo, nodes, edges }) = builder()
-        .register_op("all-reduce", nn_op::all_reduce::AllReduce)
+    let nn::Graph(graph::Graph { topo, nodes, edges }) = builder
         .build(
             llama.tensor_parallel(dist),
             [
@@ -269,69 +228,14 @@ fn launch_partial(
             ],
         )
         .unwrap();
-    // 排布权重存储
-    let align = Some(dev.alignment()).filter(|&n| n > 0).unwrap_or(512);
-    let mut ranges = RangeCollector::new(align);
-    for nn::Edge { external, .. } in &edges {
-        if let Some(nn::External { item, .. }) = external {
-            let TPTensor { act, val } = item;
-            let len = match act {
-                Some(act) => val.get().len() / act.dist.total * act.dist.len,
-                None => val.get().len(),
-            };
-            ranges.insert((act.clone(), val.get().as_ptr()), len)
-        }
-    }
     // 权重加载
-    let mut pages = MemPages::new(&dev);
-    let mut weight = pages.reserve_vir(ranges.size());
-    let mapped = weight.map(0, pages.prop().create(weight.len()));
-    let edges = dev.context().apply(|ctx| {
-        let mut loader = WeightLoader::new(
-            ranges
-                .sizes()
-                .filter(|&(_, times)| times < 4)
-                .map(|(size, _)| size),
-        );
-
-        let stream = ctx.stream();
-        let mut copied = HashSet::new();
-        edges
-            .into_iter()
-            .map(|nn::Edge { meta, external }| nn::Edge {
-                meta,
-                external: external.map(|nn::External { name, item }| {
-                    let TPTensor { act, val } = item;
-                    let range = &ranges[&(act.clone(), val.get().as_ptr())];
-                    let dev = &mut mapped[range.clone()];
-                    let ptr = dev.as_ptr().cast();
-                    nn::External {
-                        name,
-                        item: match act.clone() {
-                            Some(TPAction { wt, dist }) => {
-                                if copied.insert(range.clone()) {
-                                    loader.load(dev, &stream, |dst| wt.move_data(dist, dst, &val))
-                                }
-                                let shape = wt.split_shape(dist, val.shape());
-                                Tensor::from_dim_slice(val.dt(), &shape).map(|_| ptr)
-                            }
-                            None => {
-                                if copied.insert(range.clone()) {
-                                    loader.load(dev, &stream, |dst| dst.copy_from_slice(val.get()))
-                                }
-                                val.map(|_| ptr)
-                            }
-                        },
-                    }
-                }),
-            })
-            .collect::<Box<_>>()
-    });
+    let mut pages = MemPages::new(dev);
+    let (_weight, edges) = pages.load_weight(edges);
     // 创建 kv cache
     let mut kv_cache = KVCache::new(template, dist, &mut pages);
     // 推理
     let graph = nn::Graph(graph::Graph { topo, nodes, edges });
-    let gpu = Gpu::new(dev.retain_primary(), Default::default());
+    let gpu = Gpu::new(pages.dev().retain_primary(), Default::default());
     let attn = Attn::new(&gpu);
     let sample = Sample::new(&gpu);
     gpu.apply(|ctx| {

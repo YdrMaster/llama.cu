@@ -5,7 +5,7 @@
     ops::{Index, Range},
 };
 
-pub struct RangeCollector<K> {
+pub(super) struct RangeCollector<K> {
     calculator: RangeCalculator,
     ranges: HashMap<K, Range<usize>>,
     sizes: NumCollector<usize>,
@@ -78,7 +78,7 @@ impl RangeCalculator {
 /// 统计指定类型的参数出现的次数。
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct NumCollector<T>(HashMap<T, usize>);
+struct NumCollector<T>(HashMap<T, usize>);
 
 impl<T> Default for NumCollector<T> {
     fn default() -> Self {
