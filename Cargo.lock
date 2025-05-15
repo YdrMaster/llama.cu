@@ -1224,6 +1224,7 @@ checksum = "b4ce301924b7887e9d637144fdade93f9dfff9b60981d4ac161db09720d39aa5"
 name = "llama-cu"
 version = "0.0.0"
 dependencies = [
+ "bindgen",
  "build-script-cfg 0.1.0",
  "bytesize",
  "ggus",
