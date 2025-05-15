@@ -4,8 +4,8 @@ use ggus::{
     GGufMetaMap,
 };
 use memmap2::Mmap;
+use nn::Tensor;
 use std::{collections::HashMap, fmt::Debug, fs::File, path::Path, thread};
-use tensor::Tensor;
 
 /// 从指定文件的路径出发，映射所有分片文件。
 pub fn map_files(path: impl AsRef<Path>) -> Box<[Mmap]> {

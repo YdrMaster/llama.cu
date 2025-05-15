@@ -1,17 +1,16 @@
 ﻿use super::{Handle, Operator, add::Add};
 use crate::utils::{destruct, dims, offset_ptr};
 use ggus::ggml_quants::f16;
-use nn::Arg;
+use nn::{
+    Arg, Tensor,
+    digit_layout::{DigitLayout, types},
+    ndarray_layout::ArrayLayout,
+};
 use operators::{
     cublas::GemmScheme,
     cuda::{Stream, VirByte},
 };
 use std::mem::swap;
-use tensor::{
-    Tensor,
-    digit_layout::{DigitLayout, types},
-    ndarray_layout::ArrayLayout,
-};
 
 pub struct Linear;
 

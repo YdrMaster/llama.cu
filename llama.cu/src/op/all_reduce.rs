@@ -1,11 +1,10 @@
 ﻿use super::{Handle, Operator};
 use crate::utils::destruct;
-use nn::Arg;
+use nn::{Arg, Tensor, digit_layout::types};
 use operators::{
     cuda::{Stream, VirByte},
     nccl::ReduceType,
 };
-use tensor::{Tensor, digit_layout::types};
 
 pub struct AllReduce;
 

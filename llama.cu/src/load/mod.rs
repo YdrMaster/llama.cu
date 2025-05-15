@@ -2,11 +2,12 @@
 mod range_collector;
 
 use crate::memory::MemPages;
-use loader::WeightLoader;
 use nn::{Edge, TPAction, TPTensor, Tensor};
 use operators::cuda::{VirByte, VirMem};
 use range_collector::RangeCollector;
 use std::collections::HashSet;
+
+pub(crate) use loader::WeightLoader;
 
 type HostTPTensor<'a> = TPTensor<Tensor<&'a [u8], 2>>;
 type VirTensor = Tensor<*const VirByte, 2>;

@@ -8,9 +8,11 @@ mod rope;
 mod swiglu;
 
 use crate::handle::Handle;
-use nn::Tensor;
+use nn::{
+    Tensor,
+    digit_layout::{DigitLayout, types},
+};
 use operators::cuda::{Stream, VirByte};
-use tensor::digit_layout::{DigitLayout, types};
 
 #[cfg(nccl)]
 pub use all_reduce::AllReduce;

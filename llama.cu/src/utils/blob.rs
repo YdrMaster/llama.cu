@@ -47,13 +47,6 @@ impl Blob {
             len,
         }
     }
-
-    pub fn from_slice<T: Copy>(slice: &[T]) -> Self {
-        let len = size_of_val(slice);
-        let mut ans = Self::new(len);
-        unsafe { std::ptr::copy_nonoverlapping(slice.as_ptr().cast::<u8>(), ans.as_mut_ptr(), len) }
-        ans
-    }
 }
 
 impl Drop for Blob {

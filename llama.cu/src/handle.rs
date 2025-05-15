@@ -2,7 +2,6 @@
     op::{self, ModuleKey, Operator},
     utils::destruct,
 };
-use graph::Named;
 use nn::Tensor;
 use operators::{
     cublas::Cublas,
@@ -76,7 +75,7 @@ impl<'ctx> Handle<'ctx> {
             outputs,
         } in exec
         {
-            let Named { name, value: op } = node;
+            let op = node.value;
             macro_rules! add_to_graph {
                 ($op:ident) => {
                     op::$op::launch(
@@ -114,7 +113,7 @@ impl<'ctx> Handle<'ctx> {
                         panic!()
                     };
                     let dh = dh as usize;
-
+                    // [n, nh * dh] -> [n, nh, dh] -> [nh, n, dh]
                     let transform = |t: Tensor<*const VirByte, 2>| {
                         t.transform(|layout| {
                             layout
@@ -122,16 +121,15 @@ impl<'ctx> Handle<'ctx> {
                                 .transpose(&[1, 0])
                         })
                     };
-
-                    let iblk = {
-                        let (_, [iblk]) = REGEX.captures(&name).unwrap().extract();
-                        iblk.parse().unwrap()
-                    };
                     let q = transform(q);
                     let k = transform(k);
                     let v = transform(v);
                     let o = transform(o);
 
+                    let iblk = {
+                        let (_, [iblk]) = REGEX.captures(&node.name).unwrap().extract();
+                        iblk.parse().unwrap()
+                    };
                     exec_.push(Exec::Attention(Box::new(Attention { iblk, q, k, v, o })))
                 }
                 _ => {

@@ -5,9 +5,8 @@
 use ggus::GGufMetaMapExt;
 use nn::{
     Activation, Attention, Embedding, LLaMA, Linear, Mlp, NormType, Normalization, OutputHead,
-    RoPE, Table, Tensor, TransformerBlk,
+    RoPE, Table, Tensor, TransformerBlk, digit_layout::types,
 };
-use tensor::digit_layout::types;
 
 impl GGufModel<'_> {
     pub fn insert_sin_cos(&mut self) {

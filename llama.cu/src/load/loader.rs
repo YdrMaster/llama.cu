@@ -5,7 +5,7 @@ use std::{
     hash::Hash,
 };
 
-pub(super) struct WeightLoader<'ctx> {
+pub(crate) struct WeightLoader<'ctx> {
     /// 锁页内存的 slab 分配器
     slab: Slab<usize, HostMem<'ctx>>,
     /// 异步加载任务队列

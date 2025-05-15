@@ -1,22 +1,24 @@
 ﻿use crate::{
     Task,
     chat_template::Message,
-    exec::{ModelExec, OutputHead},
+    exec::{ModelExec, OutputHead, Request},
     gguf::{GGufModel, map_files},
     handle::Handle,
     memory::{KVCache, MemPages},
+    upos,
     utils::meta,
 };
 use ggus::{GGufMetaMapExt, ggml_quants::digit_layout::types};
-use nn::{Dim, Distribution, GraphBuilder, LLaMA, Tensor, TensorMeta, op as nn_op};
+use nn::{Dim, Distribution, Graph, GraphBuilder, LLaMA, NNGraph, Tensor, TensorMeta, op as nn_op};
 use operators::{
     Operator,
     attention_kv_cached::cuda::Operator as Attn,
     cuda::{self, Device, Gpu},
-    random_sample::{SampleArgs, cuda::Operator as Sample},
+    random_sample::{KVPair, SampleArgs, cuda::Operator as Sample},
 };
 use smallvec::{SmallVec, smallvec};
 use std::{
+    collections::BTreeMap,
     ffi::c_int,
     path::Path,
     sync::mpsc::{self, Receiver, SendError, Sender},
@@ -145,21 +147,21 @@ fn builder() -> GraphBuilder {
 
 /// 单卡启动
 fn launc_mono(
-    llama: LLaMA<Tensor<&[u8], 2>>,
+    mut llama: LLaMA<Tensor<&[u8], 2>>,
     nvoc: usize,
     template: &Tensor<usize, 2>,
     channel: MonoChannel,
 ) {
+    let output_head = llama.output_head.take().unwrap();
     let MonoChannel { dev, tokens, next } = channel;
     let builder = builder();
     // 构造图表示
-    let nn::Graph(graph::Graph { topo, nodes, edges }) = builder
+    let NNGraph(Graph { topo, nodes, edges }) = builder
         .build(
             llama.tensor_parallel(Distribution::MONO),
             [
                 TensorMeta::new(types::U32, [Dim::var("n_tok")]),
                 TensorMeta::new(types::U32, [Dim::var("n_tok")]),
-                TensorMeta::new(types::U32, [Dim::var("n_out")]),
             ],
         )
         .unwrap();
@@ -169,36 +171,55 @@ fn launc_mono(
     // 创建 kv cache
     let mut kv_cache = KVCache::new(template, Distribution::MONO, &mut pages);
     // 推理
-    let graph = nn::Graph(graph::Graph { topo, nodes, edges });
+    let graph = NNGraph(Graph { topo, nodes, edges });
     let gpu = Gpu::new(pages.dev().context(), Default::default());
     let attn = Attn::new(&gpu);
     let sample = Sample::new(&gpu);
     gpu.apply(|ctx| {
         let mut handle = Handle::new(ctx);
-        let mut models = (0..=6)
-            .map(|i| ModelExec::new(&mut handle, graph.clone(), 1 << i, 1, &mut pages))
-            .collect::<Box<_>>();
+        let mut models = [1, 8, 32, 64]
+            .into_iter()
+            .map(|n_tok| {
+                (
+                    n_tok,
+                    ModelExec::new(graph.clone(), n_tok, &mut handle, &mut pages),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        let mut kv_pair_host = ctx.malloc_host::<KVPair<()>>(1);
 
         let stream = ctx.stream();
-        let mut output_head = OutputHead::new(sample, ctx, nvoc);
+        let mut output_head = OutputHead::new(output_head, sample, ctx, nvoc);
         let mut pos = 0;
         for tokens in tokens {
-            let to_cache = tokens.len().next_power_of_two();
-            kv_cache.prepare(pos + to_cache, &mut pages);
+            let len = tokens.len();
+            let (to_cache, model) = models.range_mut(len..).next().unwrap();
+            kv_cache.prepare(pos as usize + to_cache, &mut pages);
 
-            let model_idx = to_cache.trailing_zeros() as usize;
-            let next_ = models[model_idx].launch(
-                &tokens,
+            let request = Request {
+                config: SampleArgs::new(1.2, 0.5, 1000).unwrap(),
+                tokens,
+                kv_cache: kv_cache.as_tensor().clone(),
                 pos,
-                kv_cache.as_tensor(),
-                &mut pages,
+                out: 1,
+            };
+
+            let kv_pair = model.launch(
                 &attn,
+                &mut handle,
+                &mut pages,
                 &mut output_head,
-                SampleArgs::new(1.2, 0.5, 1000).unwrap(),
+                [request].into(),
                 &stream,
             );
-            pos += tokens.len();
-            if let Err(SendError(_)) = next.send(next_) {
+            pos += len as upos;
+            stream
+                .memcpy_d2h(&mut kv_pair_host, &kv_pair)
+                .synchronize()
+                .free(kv_pair);
+            let pair = unsafe { kv_pair_host.as_mut_ptr().cast::<KVPair<()>>().read() };
+            if let Err(SendError(_)) = next.send(pair.idx() as _) {
                 break;
             }
         }
@@ -207,24 +228,24 @@ fn launc_mono(
 
 #[cfg(nccl)]
 fn launch_partial(
-    llama: LLaMA<Tensor<&[u8], 2>>,
+    mut llama: LLaMA<Tensor<&[u8], 2>>,
     dist: Distribution,
     nvoc: usize,
     template: &Tensor<usize, 2>,
     channel: Channel,
 ) {
+    let output_head = llama.output_head.take().unwrap();
     let Channel { comm, tokens, next } = channel;
     let dev = comm.device();
     let mut builder = builder();
     builder.register_op("all-reduce", nn_op::all_reduce::AllReduce);
     // 构造图表示
-    let nn::Graph(graph::Graph { topo, nodes, edges }) = builder
+    let NNGraph(Graph { topo, nodes, edges }) = builder
         .build(
             llama.tensor_parallel(dist),
             [
                 TensorMeta::new(types::U32, [Dim::var("n_tok")]),
                 TensorMeta::new(types::U32, [Dim::var("n_tok")]),
-                TensorMeta::new(types::U32, [Dim::var("n_out")]),
             ],
         )
         .unwrap();
@@ -234,37 +255,56 @@ fn launch_partial(
     // 创建 kv cache
     let mut kv_cache = KVCache::new(template, dist, &mut pages);
     // 推理
-    let graph = nn::Graph(graph::Graph { topo, nodes, edges });
+    let graph = NNGraph(Graph { topo, nodes, edges });
     let gpu = Gpu::new(pages.dev().retain_primary(), Default::default());
     let attn = Attn::new(&gpu);
     let sample = Sample::new(&gpu);
     gpu.apply(|ctx| {
         let mut handle = Handle::with_comm(ctx, comm);
-        let mut models = (0..=4)
-            .map(|i| ModelExec::new(&mut handle, graph.clone(), 1 << i, 1, &mut pages))
-            .collect::<Box<_>>();
+        let mut models = [1, 8, 32, 64]
+            .into_iter()
+            .map(|n_tok| {
+                (
+                    n_tok,
+                    ModelExec::new(graph.clone(), n_tok, &mut handle, &mut pages),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        let mut kv_pair_host = ctx.malloc_host::<KVPair<()>>(1);
 
         let stream = ctx.stream();
-        let mut output_head = OutputHead::new(sample, ctx, nvoc);
+        let mut output_head = OutputHead::new(output_head, sample, ctx, nvoc);
         let mut pos = 0;
         for tokens in tokens {
-            let to_cache = tokens.len().next_power_of_two();
-            kv_cache.prepare(pos + to_cache, &mut pages);
+            let len = tokens.len();
+            let (to_cache, model) = models.range_mut(len..).next().unwrap();
+            kv_cache.prepare(pos as usize + to_cache, &mut pages);
 
-            let model_idx = to_cache.trailing_zeros() as usize;
-            let next_ = models[model_idx].launch(
-                &tokens,
+            let request = Request {
+                config: SampleArgs::new(1.2, 0.5, 1000).unwrap(),
+                tokens,
+                kv_cache: kv_cache.as_tensor().clone(),
                 pos,
-                kv_cache.as_tensor(),
-                &mut pages,
+                out: 1,
+            };
+
+            let kv_pair = model.launch(
                 &attn,
+                &mut handle,
+                &mut pages,
                 &mut output_head,
-                SampleArgs::new(1.2, 0.5, 1000).unwrap(),
+                [request].into(),
                 &stream,
             );
-            pos += tokens.len();
+            pos += len as upos;
             if let Some(next) = &next {
-                if let Err(SendError(_)) = next.send(next_) {
+                stream
+                    .memcpy_d2h(&mut kv_pair_host, &kv_pair)
+                    .synchronize()
+                    .free(kv_pair);
+                let pair = unsafe { kv_pair_host.as_mut_ptr().cast::<KVPair<()>>().read() };
+                if let Err(SendError(_)) = next.send(pair.idx() as _) {
                     break;
                 }
             }

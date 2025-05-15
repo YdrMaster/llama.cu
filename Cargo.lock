@@ -85,7 +85,7 @@ dependencies = [
 [[package]]
 name = "arg"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=481673f#481673f507beca5398fc6f75698d664e4dc9a79b"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=23e086c#23e086c5c37dfd2acc0b85d611899a02fc2d5629"
 
 [[package]]
 name = "atomic-waker"
@@ -347,9 +347,9 @@ dependencies = [
 
 [[package]]
 name = "digit-layout"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05de9b28406710382874705fe75b40592d9a1dade07582644d8215c2dd087605"
+checksum = "21cba97b8c9bd3d9a6381565825ddabba86ddcd3a3ba090f48f39c1217d7f0d4"
 dependencies = [
  "half",
 ]
@@ -399,7 +399,7 @@ dependencies = [
 [[package]]
 name = "exec"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=481673f#481673f507beca5398fc6f75698d664e4dc9a79b"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=23e086c#23e086c5c37dfd2acc0b85d611899a02fc2d5629"
 dependencies = [
  "arg",
  "graph",
@@ -599,10 +599,7 @@ checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
 [[package]]
 name = "graph"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=481673f#481673f507beca5398fc6f75698d664e4dc9a79b"
-dependencies = [
- "bit-set",
-]
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=23e086c#23e086c5c37dfd2acc0b85d611899a02fc2d5629"
 
 [[package]]
 name = "h2"
@@ -967,7 +964,6 @@ version = "0.0.0"
 dependencies = [
  "build-script-cfg 0.1.0",
  "ggus",
- "graph",
  "memmap2",
  "minijinja",
  "nn",
@@ -977,7 +973,6 @@ dependencies = [
  "search-cuda-tools 0.0.0 (git+https://github.com/YdrMaster/cuda-driver?rev=f3ffbcc)",
  "serde",
  "smallvec",
- "tensor",
  "tokeneer",
 ]
 
@@ -999,7 +994,7 @@ dependencies = [
 [[package]]
 name = "mem"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=481673f#481673f507beca5398fc6f75698d664e4dc9a79b"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=23e086c#23e086c5c37dfd2acc0b85d611899a02fc2d5629"
 dependencies = [
  "arg",
  "exec",
@@ -1120,14 +1115,14 @@ checksum = "86a1db1a5ed8293057d401ebd96872cb881a3693d9b55379ae320f652aea3714"
 [[package]]
 name = "nn"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=481673f#481673f507beca5398fc6f75698d664e4dc9a79b"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=23e086c#23e086c5c37dfd2acc0b85d611899a02fc2d5629"
 dependencies = [
  "arg",
- "digit-layout",
  "graph",
  "itertools 0.14.0",
  "mem",
  "mem-rearrange",
+ "tensor",
 ]
 
 [[package]]
@@ -1795,7 +1790,7 @@ dependencies = [
 [[package]]
 name = "tensor"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/tensor?rev=66450a9#66450a954f1bf507ae229bba3325599aa0bcecea"
+source = "git+https://github.com/YdrMaster/tensor?rev=c0b4893#c0b4893b860530180525a47fb76d16caa0b9e6dc"
 dependencies = [
  "digit-layout",
  "ndarray-layout",

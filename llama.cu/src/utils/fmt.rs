@@ -1,9 +1,8 @@
 ﻿use super::Blob;
 use ggus::ggml_quants::f16;
-use nn::Tensor;
+use nn::{Tensor, digit_layout::types};
 use operators::cuda::{CurrentCtx, DevByte, VirByte, memcpy_d2h};
 use std::fmt;
-use tensor::digit_layout::types;
 
 #[allow(unused)]
 pub(crate) fn fmt<const N: usize>(tensor: &Tensor<*const VirByte, N>, _ctx: &CurrentCtx) {

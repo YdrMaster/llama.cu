@@ -1,11 +1,11 @@
 use super::{Handle, ModuleKey, Operator, cuda_type};
 use crate::utils::{destruct, dims, offset_ptr, strides};
-use operators::cuda::{Stream, VirByte, params};
-use std::ffi::c_uint;
-use tensor::{
+use nn::{
     Tensor,
     digit_layout::{DigitLayout, types},
 };
+use operators::cuda::{Stream, VirByte, params};
+use std::ffi::c_uint;
 
 pub struct Rope;
 
