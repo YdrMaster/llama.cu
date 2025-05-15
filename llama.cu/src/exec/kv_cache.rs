@@ -11,8 +11,8 @@ pub(crate) struct KVCache {
     size_per_token: usize,
     /// 每个页的大小
     page_size: usize,
-    /// 已映射的页数
-    mapped: usize,
+    /// 已占用的容量
+    pos: usize,
 }
 
 impl KVCache {
@@ -33,19 +33,47 @@ impl KVCache {
             vir,
             size_per_token,
             page_size: pages.page_size(),
-            mapped: 0,
+            pos: 0,
         }
     }
 
-    pub fn prepare(&mut self, ntok: usize, pages: &mut MemPages) {
-        let n_page = (ntok * self.size_per_token).div_ceil(self.page_size);
-        if self.mapped < n_page {
-            pages.map(&mut self.vir, self.mapped..n_page);
-            self.mapped = n_page
+    pub fn update(&mut self, len: usize, pages: &mut MemPages) -> bool {
+        if len > self.buf_len() {
+            return false;
         }
+
+        let &mut Self {
+            ref mut vir,
+            pos,
+            size_per_token,
+            page_size,
+            ..
+        } = self;
+        // 计算页数
+        let mapped = (pos * size_per_token).div_ceil(page_size);
+        let target = (len * size_per_token).div_ceil(page_size);
+        // 映射物理页，多退少补
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        match mapped.cmp(&target) {
+            Less => pages.map(vir, mapped..target),
+            Greater => pages.unmap(vir, target..mapped),
+            Equal => {}
+        }
+        // 更新位置
+        self.pos = len;
+        true
     }
 
     pub const fn as_tensor(&self) -> &Tensor<*const VirByte, 2> {
         &self.tensor
+    }
+
+    pub const fn pos(&self) -> usize {
+        self.pos
+    }
+
+    /// kv cache 虚地址空间容量
+    pub fn buf_len(&self) -> usize {
+        self.tensor.shape()[3]
     }
 }

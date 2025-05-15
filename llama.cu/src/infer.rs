@@ -4,7 +4,6 @@
     handle::Handle,
     memory::MemPages,
     model::{GGufModel, Message, map_files},
-    upos,
     utils::meta,
 };
 use ggus::{GGufMetaMapExt, ggml_quants::digit_layout::types};
@@ -190,21 +189,20 @@ fn launc_mono(
         let mut kv_cache = KVCache::new(template, Distribution::MONO, &mut pages);
 
         let stream = ctx.stream();
-        let mut pos = 0;
         for tokens in tokens {
+            let pos = kv_cache.pos();
             let len = tokens.len();
-            kv_cache.prepare(pos as usize + len, &mut pages);
+            kv_cache.update(pos + len, &mut pages);
 
             let request = Request {
-                sample_args: SampleArgs::new(1.2, 0.5, 1000).unwrap(),
+                sample_args: SampleArgs::ARG_MAX,
                 tokens,
                 kv_cache: kv_cache.as_tensor().clone(),
-                pos,
+                pos: pos as _,
                 out: 1,
             };
 
             let kv_pair = models.launch([request].into(), &mut handle, &mut pages, &stream);
-            pos += len as upos;
             stream
                 .memcpy_d2h(&mut kv_pair_host, &kv_pair)
                 .synchronize()
@@ -265,21 +263,20 @@ fn launch_partial(
         let mut kv_cache = KVCache::new(template, dist, &mut pages);
 
         let stream = ctx.stream();
-        let mut pos = 0;
         for tokens in tokens {
+            let pos = kv_cache.pos();
             let len = tokens.len();
-            kv_cache.prepare(pos as usize + len, &mut pages);
+            kv_cache.update(pos + len, &mut pages);
 
             let request = Request {
-                sample_args: SampleArgs::new(1.2, 0.5, 1000).unwrap(),
+                sample_args: SampleArgs::ARG_MAX,
                 tokens,
                 kv_cache: kv_cache.as_tensor().clone(),
-                pos,
+                pos: pos as _,
                 out: 1,
             };
 
             let kv_pair = models.launch([request].into(), &mut handle, &mut pages, &stream);
-            pos += len as upos;
             if let Some(next) = &next {
                 stream
                     .memcpy_d2h(&mut kv_pair_host, &kv_pair)
