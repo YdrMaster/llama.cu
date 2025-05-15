@@ -962,6 +962,7 @@ checksum = "241eaef5fd12c88705a01fc1066c48c4b36e0dd4377dcdc7ec3942cea7a69956"
 name = "llama-cu"
 version = "0.0.0"
 dependencies = [
+ "bindgen",
  "build-script-cfg 0.1.0",
  "ggus",
  "memmap2",
