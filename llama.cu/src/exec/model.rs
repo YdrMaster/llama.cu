@@ -15,7 +15,10 @@ use operators::{
     attention_kv_cached::{Args as AttnArgs, cuda::Operator as Attn},
     cuda::{CurrentCtx, DevMem, HostMem, Stream, VirByte, VirMem, memcpy_h2d},
 };
-use std::iter::zip;
+use std::{
+    iter::zip,
+    sync::{Arc, Barrier},
+};
 use tokeneer::utok;
 
 pub(super) struct ModelExec<'ctx> {
@@ -24,6 +27,7 @@ pub(super) struct ModelExec<'ctx> {
     workspace: VirMem,
     inputs: Box<[Tensor<*const VirByte, 2>]>,
     outputs: Box<[Tensor<*const VirByte, 2>]>,
+    barrier: Option<Arc<Barrier>>,
 }
 
 impl<'ctx> ModelExec<'ctx> {
@@ -32,6 +36,7 @@ impl<'ctx> ModelExec<'ctx> {
         n_tok: usize,
         handle: &mut Handle<'ctx>,
         pages: &mut MemPages,
+        barrier: Option<Arc<Barrier>>,
     ) -> Self {
         let graph = graph.lower(&[("n_tok", n_tok)].into(), |t| t);
 
@@ -62,6 +67,9 @@ impl<'ctx> ModelExec<'ctx> {
         pages.map(&mut workspace, ..);
 
         // 构造 cuda graph
+        if let Some(barrier) = &barrier {
+            barrier.wait();
+        }
         let execs = handle.merge_cuda_graph(exec);
 
         // 解除映射回收物理页
@@ -73,6 +81,7 @@ impl<'ctx> ModelExec<'ctx> {
             workspace,
             inputs,
             outputs,
+            barrier,
         }
     }
 }
@@ -107,6 +116,9 @@ impl ModelExec<'_> {
             )
         }
         // 执行
+        if let Some(barrier) = &self.barrier {
+            barrier.wait();
+        }
         for exec in &self.execs {
             match exec {
                 Step::Graph(graph, stub) => {

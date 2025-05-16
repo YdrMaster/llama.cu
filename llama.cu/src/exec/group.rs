@@ -6,7 +6,11 @@ use operators::{
     cuda::{DevMem, Stream, VirByte},
     random_sample::{SampleArgs, cuda::Operator as Sample},
 };
-use std::{collections::BTreeMap, num::NonZeroUsize};
+use std::{
+    collections::BTreeMap,
+    num::NonZeroUsize,
+    sync::{Arc, Barrier},
+};
 use tokeneer::utok;
 
 #[derive(Clone)]
@@ -34,6 +38,7 @@ impl<'ctx> ModelGroup<'ctx> {
         sample: Sample,
         handle: &mut Handle<'ctx>,
         pages: &mut MemPages,
+        barrier: Option<Arc<Barrier>>,
     ) -> Self {
         Self {
             models: n_toks
@@ -41,7 +46,7 @@ impl<'ctx> ModelGroup<'ctx> {
                 .map(|n_tok| {
                     (
                         NonZeroUsize::new(n_tok).unwrap(),
-                        ModelExec::new(graph.clone(), n_tok, handle, pages),
+                        ModelExec::new(graph.clone(), n_tok, handle, pages, barrier.clone()),
                     )
                 })
                 .collect(),

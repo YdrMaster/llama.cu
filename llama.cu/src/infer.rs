@@ -18,7 +18,10 @@ use smallvec::{SmallVec, smallvec};
 use std::{
     ffi::c_int,
     path::Path,
-    sync::mpsc::{self, Receiver, SendError, Sender},
+    sync::{
+        Arc, Barrier,
+        mpsc::{self, Receiver, SendError, Sender},
+    },
     time::{Duration, Instant},
 };
 use tokeneer::{Bpe, utok};
@@ -72,6 +75,7 @@ pub fn infer(
         gpus => {
             let mut senders = Vec::new();
             let comms = CommunicatorGroup::new(gpus);
+            let barrier = Arc::new(Barrier::new(comms.len()));
             let channels = comms
                 .into_vec()
                 .into_iter()
@@ -87,6 +91,7 @@ pub fn infer(
                         None
                     },
                     comm,
+                    barrier: barrier.clone(),
                 })
                 .collect::<Box<_>>();
 
@@ -126,6 +131,7 @@ struct Channel {
     comm: Communicator,
     tokens: Receiver<SmallVec<[utok; 1]>>,
     next: Option<Sender<utok>>,
+    barrier: Arc<Barrier>,
 }
 
 fn builder() -> GraphBuilder {
@@ -181,6 +187,7 @@ fn launc_mono(
             sample,
             &mut handle,
             &mut pages,
+            None,
         );
 
         let mut kv_pair_host = ctx.malloc_host::<KVPair<()>>(1);
@@ -222,7 +229,12 @@ fn launch_partial(
     template: &Tensor<usize, 2>,
     channel: Channel,
 ) {
-    let Channel { comm, tokens, next } = channel;
+    let Channel {
+        comm,
+        tokens,
+        next,
+        barrier,
+    } = channel;
     let dev = comm.device();
 
     let output_head = llama.output_head.take().unwrap();
@@ -255,6 +267,7 @@ fn launch_partial(
             sample,
             &mut handle,
             &mut pages,
+            Some(barrier),
         );
 
         let mut kv_pair_host = ctx.malloc_host::<KVPair<()>>(1);
