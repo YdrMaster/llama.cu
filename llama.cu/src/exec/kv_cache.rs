@@ -1,5 +1,5 @@
 ﻿use crate::memory::MemPages;
-use nn::{Distribution, Tensor};
+use nn::Tensor;
 use operators::cuda::{VirByte, VirMem};
 
 pub(crate) struct KVCache {
@@ -18,9 +18,9 @@ pub(crate) struct KVCache {
 unsafe impl Send for KVCache {}
 
 impl KVCache {
-    pub fn new(template: &Tensor<usize, 2>, dist: Distribution, pages: &MemPages) -> Self {
+    pub fn new(template: &Tensor<usize, 2>, len: usize, total: usize, pages: &MemPages) -> Self {
         let mut shape = template.shape().to_vec();
-        shape[3] = shape[3] / dist.total * dist.len;
+        shape[3] = shape[3] / total * len;
         let template = Tensor::from_dim_slice(template.dt(), &shape);
 
         let size_per_token = template.get() / template.shape()[0];

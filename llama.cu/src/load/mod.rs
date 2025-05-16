@@ -98,14 +98,14 @@ fn load_exteranl<'ctx>(
         item: match act.clone() {
             Some(TPAction { wt, dist }) => {
                 if copied.insert(range.clone()) {
-                    loader.load(dev, &stream, |dst| wt.move_data(dist, dst, &val))
+                    loader.load(dev, stream, |dst| wt.move_data(dist, dst, &val))
                 }
                 let shape = wt.split_shape(dist, val.shape());
                 Tensor::from_dim_slice(val.dt(), &shape).map(|_| ptr)
             }
             None => {
                 if copied.insert(range.clone()) {
-                    loader.load(dev, &stream, |dst| dst.copy_from_slice(val.get()))
+                    loader.load(dev, stream, |dst| dst.copy_from_slice(val.get()))
                 }
                 val.map(|_| ptr)
             }
