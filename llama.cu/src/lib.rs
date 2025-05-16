@@ -7,6 +7,7 @@ mod model;
 mod op;
 mod utils;
 
+use log::info;
 use std::{
     ffi::c_int,
     marker::PhantomData,
@@ -63,10 +64,8 @@ impl BusySession<'_> {
 impl Drop for Handle {
     fn drop(&mut self) {
         let (duration, steps) = self.0.take().unwrap().join().unwrap();
-        let time = duration.div_f32(steps as _);
-        println!();
-        println!();
-        println!(
+        let time = duration / steps as _;
+        info!(
             "steps = {steps}, perf: {time:?}/tok, {}tok/s",
             Duration::from_secs(1).div_duration_f32(time),
         )

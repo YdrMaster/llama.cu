@@ -28,6 +28,7 @@ impl GenerateArgs {
         while let Some(text) = busy.receive() {
             print_now!("{text}")
         }
-        drop(session);
+        println!();
+        drop(session)
     }
 }

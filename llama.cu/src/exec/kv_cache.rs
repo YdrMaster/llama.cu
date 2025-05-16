@@ -15,8 +15,10 @@ pub(crate) struct KVCache {
     pos: usize,
 }
 
+unsafe impl Send for KVCache {}
+
 impl KVCache {
-    pub fn new(template: &Tensor<usize, 2>, dist: Distribution, pages: &mut MemPages) -> Self {
+    pub fn new(template: &Tensor<usize, 2>, dist: Distribution, pages: &MemPages) -> Self {
         let mut shape = template.shape().to_vec();
         shape[3] = shape[3] / dist.total * dist.len;
         let template = Tensor::from_dim_slice(template.dt(), &shape);
@@ -37,6 +39,7 @@ impl KVCache {
         }
     }
 
+    /// 更新 kv cache，使之可容纳 len 个 token
     pub fn update(&mut self, len: usize, pages: &mut MemPages) -> bool {
         if len > self.buf_len() {
             return false;

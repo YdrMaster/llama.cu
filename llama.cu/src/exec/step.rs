@@ -3,10 +3,11 @@
     op::{self, Operator},
     utils::destruct,
 };
-use nn::Tensor;
+use log::error;
+use nn::{Arg, Tensor};
 use operators::cuda::{GraphExec, VirByte};
 use regex::Regex;
-use std::sync::LazyLock;
+use std::{fmt, sync::LazyLock};
 
 pub(super) enum Step<'ctx> {
     Graph(GraphExec<'ctx>, Box<[Tensor<*const VirByte, 2>]>),
@@ -92,15 +93,16 @@ impl<'ctx> Handle<'ctx> {
                     exec_.push(Step::Attention(Box::new(Attention { iblk, q, k, v, o })))
                 }
                 _ => {
-                    print!("todo! {} ({:?})", op.name, op.arg);
-                    for t in inputs {
-                        print!(" {}{:?}", t.dt(), t.shape())
-                    }
-                    print!(" ->");
-                    for t in outputs {
-                        print!(" {}{:?}", t.dt(), t.shape())
-                    }
-                    println!();
+                    error!(
+                        "{}",
+                        ErrorFmt {
+                            name: &node.name,
+                            ty: &op.name,
+                            arg: &op.arg,
+                            inputs: &inputs,
+                            outputs: &outputs,
+                        }
+                    );
                     break;
                 }
             }
@@ -112,5 +114,34 @@ impl<'ctx> Handle<'ctx> {
             ))
         }
         exec_.into()
+    }
+}
+
+struct ErrorFmt<'a> {
+    name: &'a str,
+    ty: &'a str,
+    arg: &'a Option<Arg>,
+    inputs: &'a [Tensor<*const VirByte, 2>],
+    outputs: &'a [Tensor<*const VirByte, 2>],
+}
+
+impl fmt::Display for ErrorFmt<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let &Self {
+            name,
+            ty,
+            arg,
+            inputs,
+            outputs,
+        } = self;
+        write!(f, "todo! [{ty}] {name} ({arg:?})")?;
+        for t in inputs {
+            write!(f, " {}{:?}", t.dt(), t.shape())?
+        }
+        write!(f, " ->")?;
+        for t in outputs {
+            write!(f, " {}{:?}", t.dt(), t.shape())?
+        }
+        writeln!(f)
     }
 }

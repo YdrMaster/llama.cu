@@ -193,7 +193,7 @@ fn launc_mono(
         let mut kv_pair_host = ctx.malloc_host::<KVPair<()>>(1);
 
         // 创建 kv cache
-        let mut kv_cache = KVCache::new(template, Distribution::MONO, &mut pages);
+        let mut kv_cache = KVCache::new(template, Distribution::MONO, &pages);
 
         let stream = ctx.stream();
         for tokens in tokens {
@@ -273,7 +273,7 @@ fn launch_partial(
         let mut kv_pair_host = ctx.malloc_host::<KVPair<()>>(1);
 
         // 创建 kv cache
-        let mut kv_cache = KVCache::new(template, dist, &mut pages);
+        let mut kv_cache = KVCache::new(template, dist, &pages);
 
         let stream = ctx.stream();
         for tokens in tokens {
