@@ -7,6 +7,7 @@
     utils::meta,
 };
 use ggus::{GGufMetaMapExt, ggml_quants::digit_layout::types};
+use log::info;
 use nn::{Dim, Distribution, Graph, GraphBuilder, LLaMA, NNGraph, Tensor, TensorMeta, op as nn_op};
 use operators::{
     Operator,
@@ -43,6 +44,7 @@ pub fn infer(
     // 调取重要配置
     let llama = gguf.llama();
     let kv_cache = gguf.kv_cache();
+    info!("start inference @gpu{gpus:?}");
 
     assert!(cuda::init().is_ok());
     let (next, receiver) = mpsc::channel();

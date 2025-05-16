@@ -1,5 +1,6 @@
 mod chat;
 mod generate;
+mod logger;
 mod service;
 
 use chat::ChatArgs;
@@ -12,19 +13,8 @@ use std::{ffi::c_int, path::PathBuf, sync::LazyLock};
 #[macro_use]
 extern crate clap;
 
-/// <https://docs.rs/flexi_logger/0.30.1/flexi_logger/struct.LogSpecification.html>
-const DEFAULT_LOG: &str = "error, llama_cu=trace";
-
-/// <https://docs.rs/flexi_logger/0.30.1/flexi_logger/struct.Logger.html#method.set_palette>
-const LOG_PALETTE: &str = "b9;178;34;5;0";
-
 fn main() {
-    flexi_logger::Logger::try_with_env_or_str(DEFAULT_LOG)
-        .unwrap()
-        .set_palette(LOG_PALETTE.into())
-        .start()
-        .unwrap();
-
+    logger::init();
     use Commands::*;
     match Cli::parse().command {
         Generate(args) => args.generate(),

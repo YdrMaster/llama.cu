@@ -11,6 +11,7 @@ nn = { git = "https://github.com/YdrMaster/InfiniNN", rev = "23e086c" }
 ggus = { git = "https://github.com/InfiniTensor/gguf", rev = "23c362f" }
 tokeneer = { git = "https://github.com/InfiniTensor/tokeneer", rev = "12c2d99" }
 
+bytesize = "2.0"
 log.workspace = true
 regex.workspace = true
 serde.workspace = true

@@ -1,5 +1,6 @@
 ﻿use super::{model::ModelExec, output_head::OutputHead};
 use crate::{handle::Handle, memory::MemPages};
+use log::debug;
 use nn::{NNGraph, Tensor};
 use operators::{
     attention_kv_cached::cuda::Operator as Attn,
@@ -10,6 +11,7 @@ use std::{
     collections::BTreeMap,
     num::NonZeroUsize,
     sync::{Arc, Barrier},
+    time::Instant,
 };
 use tokeneer::utok;
 
@@ -40,16 +42,25 @@ impl<'ctx> ModelGroup<'ctx> {
         pages: &mut MemPages,
         barrier: Option<Arc<Barrier>>,
     ) -> Self {
+        let idev = pages.dev().index();
+        debug!("compiling model group @{idev}");
+        let time = Instant::now();
+        let models = n_toks
+            .into_iter()
+            .map(|n_tok| {
+                (
+                    NonZeroUsize::new(n_tok).unwrap(),
+                    ModelExec::new(graph.clone(), n_tok, handle, pages, barrier.clone()),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        debug!(
+            "group ({} models) compiled @{idev} in {:.02?}",
+            models.len(),
+            time.elapsed(),
+        );
         Self {
-            models: n_toks
-                .into_iter()
-                .map(|n_tok| {
-                    (
-                        NonZeroUsize::new(n_tok).unwrap(),
-                        ModelExec::new(graph.clone(), n_tok, handle, pages, barrier.clone()),
-                    )
-                })
-                .collect(),
+            models,
             mapped: None,
             attn,
             output_head: OutputHead::new(output_head, sample, handle.ctx),

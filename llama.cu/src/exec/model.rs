@@ -9,6 +9,8 @@ use crate::{
     upos,
     utils::{self, cast_slice_mut, destruct, layout, offset_ptr},
 };
+use bytesize::ByteSize;
+use log::trace;
 use nn::{NNGraph, Tensor};
 use operators::{
     Operator as _,
@@ -18,6 +20,7 @@ use operators::{
 use std::{
     iter::zip,
     sync::{Arc, Barrier},
+    time::Instant,
 };
 use tokeneer::utok;
 
@@ -67,10 +70,17 @@ impl<'ctx> ModelExec<'ctx> {
         pages.map(&mut workspace, ..);
 
         // 构造 cuda graph
+        let time = Instant::now();
         if let Some(barrier) = &barrier {
             barrier.wait();
         }
         let execs = handle.merge_cuda_graph(exec);
+        trace!(
+            "model compiled @{} in {:.2?}, seq len = {n_tok}, workspace = {}",
+            pages.dev().index(),
+            time.elapsed(),
+            ByteSize::b(workspace.len() as _).display(),
+        );
 
         // 解除映射回收物理页
         pages.unmap(&mut workspace, ..);
