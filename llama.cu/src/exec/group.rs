@@ -41,6 +41,7 @@ impl<'ctx> ModelGroup<'ctx> {
         handle: &mut Handle<'ctx>,
         pages: &mut MemPages,
         barrier: Option<Arc<Barrier>>,
+        use_cuda_graph: bool,
     ) -> Self {
         let idev = pages.dev().index();
         debug!("compiling model group @{idev}");
@@ -50,7 +51,14 @@ impl<'ctx> ModelGroup<'ctx> {
             .map(|n_tok| {
                 (
                     NonZeroUsize::new(n_tok).unwrap(),
-                    ModelExec::new(graph.clone(), n_tok, handle, pages, barrier.clone()),
+                    ModelExec::new(
+                        graph.clone(),
+                        n_tok,
+                        handle,
+                        pages,
+                        barrier.clone(),
+                        use_cuda_graph,
+                    ),
                 )
             })
             .collect::<BTreeMap<_, _>>();

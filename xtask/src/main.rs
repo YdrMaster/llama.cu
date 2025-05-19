@@ -48,6 +48,8 @@ struct BaseArgs {
     gpus: Option<String>,
     #[clap(long)]
     max_steps: Option<usize>,
+    #[clap(long)]
+    no_cuda_graph: bool,
 }
 
 impl BaseArgs {

@@ -30,6 +30,7 @@ pub fn infer(
     max_steps: usize,
     requests: Receiver<Task>,
     session: Sender<Receiver<String>>,
+    use_cuda_grpah: bool,
 ) -> (Duration, usize) {
     // 从文件加载权重
     let maps = map_files(model);
@@ -52,7 +53,8 @@ pub fn infer(
                 senders.push(sender);
 
                 let dev = Device::new(index);
-                let _worker = s.spawn(move || launch_mono(llama, dev, commands, outputs));
+                let _worker =
+                    s.spawn(move || launch_mono(llama, dev, commands, outputs, use_cuda_grpah));
             }
             #[cfg(not(nccl))]
             [..] => panic!("nccl not found"),
@@ -76,7 +78,15 @@ pub fn infer(
                         let barrier = barrier.clone();
                         let outputs = outputs.clone();
                         s.spawn(move || {
-                            launch_partial(llama, comm, dist, barrier, commands, outputs)
+                            launch_partial(
+                                llama,
+                                comm,
+                                dist,
+                                barrier,
+                                commands,
+                                outputs,
+                                use_cuda_grpah,
+                            )
                         })
                     })
                     .collect::<Box<_>>();
@@ -100,6 +110,7 @@ fn launch_mono(
     dev: Device,
     commands: Receiver<Command>,
     outputs: Sender<Output>,
+    use_cuda_grpah: bool,
 ) {
     crate::exec::engine(
         llama,
@@ -108,6 +119,7 @@ fn launch_mono(
         None,
         commands,
         outputs,
+        use_cuda_grpah,
         |ctx| Handle::new(ctx),
     )
 }
@@ -120,6 +132,7 @@ fn launch_partial(
     barrier: Arc<Barrier>,
     commands: Receiver<Command>,
     outputs: Sender<Output>,
+    use_cuda_grpah: bool,
 ) {
     crate::exec::engine(
         llama,
@@ -128,6 +141,7 @@ fn launch_partial(
         Some(barrier),
         commands,
         outputs,
+        use_cuda_grpah,
         |ctx| Handle::with_comm(ctx, comm),
     )
 }

@@ -21,7 +21,7 @@ impl GenerateArgs {
         let gpus = base.gpus();
         let max_steps = base.max_steps();
         let prompt = prompt.unwrap_or("Once upon a time,".into());
-        let (mut session, _handle) = Session::new(base.model, gpus, max_steps);
+        let (mut session, _handle) = Session::new(base.model, gpus, max_steps, !base.no_cuda_graph);
         let busy = session.send(prompt.clone(), use_template);
         let first = busy.receive().unwrap();
         print_now!("{prompt}{first}");

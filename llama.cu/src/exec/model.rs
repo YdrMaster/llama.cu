@@ -1,20 +1,15 @@
-﻿use super::{
-    group::Request,
-    output_head::OutputHead,
-    step::{Attention, Step},
-};
+﻿use super::{group::Request, output_head::OutputHead, step::Step};
 use crate::{
     handle::Handle,
     memory::MemPages,
     upos,
-    utils::{self, cast_slice_mut, destruct, layout, offset_ptr},
+    utils::{self, cast_slice_mut, destruct},
 };
 use bytesize::ByteSize;
 use log::trace;
 use nn::{NNGraph, Tensor};
 use operators::{
-    Operator as _,
-    attention_kv_cached::{Args as AttnArgs, cuda::Operator as Attn},
+    attention_kv_cached::cuda::Operator as Attn,
     cuda::{CurrentCtx, DevMem, HostMem, Stream, VirByte, VirMem, memcpy_h2d},
 };
 use std::{
@@ -40,6 +35,7 @@ impl<'ctx> ModelExec<'ctx> {
         handle: &mut Handle<'ctx>,
         pages: &mut MemPages,
         barrier: Option<Arc<Barrier>>,
+        use_cuda_graph: bool,
     ) -> Self {
         let graph = graph.lower(&[("n_tok", n_tok)].into(), |t| t);
 
@@ -74,7 +70,7 @@ impl<'ctx> ModelExec<'ctx> {
         if let Some(barrier) = &barrier {
             barrier.wait();
         }
-        let execs = handle.merge_cuda_graph(exec);
+        let execs = handle.build_steps(exec, use_cuda_graph);
         trace!(
             "model compiled @{} in {:.2?}, seq len = {n_tok}, workspace = {}",
             pages.dev().index(),
@@ -97,10 +93,12 @@ impl<'ctx> ModelExec<'ctx> {
 }
 
 impl ModelExec<'_> {
+    /// 映射虚页
     pub fn map(&mut self, pages: &mut MemPages) {
         pages.map(&mut self.workspace, ..)
     }
 
+    /// 解映射虚页
     pub fn unmap(&mut self, pages: &mut MemPages) {
         pages.unmap(&mut self.workspace, ..)
     }
@@ -140,45 +138,8 @@ impl ModelExec<'_> {
                         std::process::exit(0);
                     }
                 }
-                Step::Attention(box_) => {
-                    let Attention { iblk, q, k, v, o } = &**box_;
-                    let mut start = 0;
-                    for req in reqs {
-                        // [nkvh, 2, nctx, dh]
-                        let cache = req.kv_cache.clone();
-                        let cache = cache.transform(|layout| layout.index(1, *iblk));
-                        let k_cache = cache.clone().transform(|layout| layout.index(1, 0));
-                        let v_cache = cache.clone().transform(|layout| layout.index(1, 1));
-                        // [nh, n, dh]
-                        let len = req.seq;
-                        let q = q.clone().transform(|layout| layout.slice(1, start, 1, len));
-                        let k = k.clone().transform(|layout| layout.slice(1, start, 1, len));
-                        let v = v.clone().transform(|layout| layout.slice(1, start, 1, len));
-                        let o = o.clone().transform(|layout| layout.slice(1, start, 1, len));
-                        start += len;
-                        attn.launch(
-                            &AttnArgs {
-                                q_layout: layout(&q),
-                                q_base: offset_ptr(&q).cast_mut().cast(),
-                                k_layout: layout(&k),
-                                k_base: offset_ptr(&k).cast(),
-                                v_layout: layout(&v),
-                                v_base: offset_ptr(&v).cast(),
-                                o_layout: layout(&o),
-                                o_base: offset_ptr(&o).cast_mut().cast(),
-                                k_cache_layout: layout(&k_cache),
-                                k_cache_base: offset_ptr(&k_cache).cast_mut().cast(),
-                                v_cache_layout: layout(&v_cache),
-                                v_cache_base: offset_ptr(&v_cache).cast_mut().cast(),
-                                mask: operators::fuesd_softmax::AttnMask::Causal,
-                                pos: req.pos as _,
-                            },
-                            &mut [],
-                            stream,
-                        )
-                        .unwrap()
-                    }
-                }
+                Step::Attention(box_) => handle.launch_attn(attn, box_, reqs, stream),
+                Step::Exec(exec) => handle.launch_nn_exec(exec, stream),
             }
         }
         destruct!([x] = self.outputs.clone());

@@ -40,7 +40,13 @@ impl ServiceArgs {
         let max_steps = base.max_steps();
         tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(start_infer_service(base.model, port, gpus, max_steps))
+            .block_on(start_infer_service(
+                base.model,
+                port,
+                gpus,
+                max_steps,
+                !base.no_cuda_graph,
+            ))
             .unwrap()
     }
 }
@@ -50,11 +56,12 @@ async fn start_infer_service(
     port: u16,
     gpus: Box<[c_int]>,
     max_steps: usize,
+    use_cuda_graph: bool,
 ) -> std::io::Result<()> {
     let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port));
     info!("start service at {addr}");
 
-    let (session, _handle) = Session::new(model, gpus, max_steps);
+    let (session, _handle) = Session::new(model, gpus, max_steps, use_cuda_graph);
     let app = App(Arc::new(Mutex::new(session)));
 
     let listener = TcpListener::bind(addr).await?;
@@ -136,7 +143,13 @@ fn test_post() {
         .block_on(async move {
             let client = reqwest::Client::new();
 
-            let _handle = tokio::spawn(start_infer_service(path.into(), PORT, [0].into(), 256));
+            let _handle = tokio::spawn(start_infer_service(
+                path.into(),
+                PORT,
+                [0].into(),
+                256,
+                false,
+            ));
 
             let mut headers = HeaderMap::new();
             headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));

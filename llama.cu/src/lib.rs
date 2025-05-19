@@ -36,11 +36,17 @@ pub struct BusySession<'s>(Receiver<String>, PhantomData<&'s mut Session>);
 pub struct Handle(Option<std::thread::JoinHandle<(Duration, usize)>>);
 
 impl Session {
-    pub fn new(model: PathBuf, gpus: Box<[c_int]>, max_steps: usize) -> (Self, Handle) {
+    pub fn new(
+        model: PathBuf,
+        gpus: Box<[c_int]>,
+        max_steps: usize,
+        use_cuda_graph: bool,
+    ) -> (Self, Handle) {
         let (user, request) = channel();
         let (response, assistant) = channel();
-        let thread: std::thread::JoinHandle<(Duration, usize)> =
-            std::thread::spawn(move || infer::infer(model, &gpus, max_steps, request, response));
+        let thread: std::thread::JoinHandle<(Duration, usize)> = std::thread::spawn(move || {
+            infer::infer(model, &gpus, max_steps, request, response, use_cuda_graph)
+        });
         (Self { user, assistant }, Handle(Some(thread)))
     }
 

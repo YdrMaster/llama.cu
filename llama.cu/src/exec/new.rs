@@ -165,6 +165,7 @@ pub(crate) fn engine(
     barrier: Option<Arc<Barrier>>,
     commands: Receiver<Command>,
     outputs: Sender<Output>,
+    use_cuda_graph: bool,
     handle: impl FnOnce(&CurrentCtx) -> Handle,
 ) {
     let output_head = llama.output_head.take().unwrap();
@@ -198,6 +199,7 @@ pub(crate) fn engine(
             &mut handle,
             &mut pages,
             barrier,
+            use_cuda_graph,
         );
 
         let mut manager = EngineManager(Default::default());
