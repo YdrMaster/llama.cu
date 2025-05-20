@@ -1,11 +1,11 @@
 ﻿//! All HttpResponses in this App.
 
-use super::schemas;
+use super::error::Error;
 use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
 use hyper::{
     Response, StatusCode,
     body::{Bytes, Frame},
-    header::CONTENT_TYPE,
+    header::{CACHE_CONTROL, CONNECTION, CONTENT_TYPE},
 };
 use tokio_stream::{Stream, StreamExt};
 
@@ -15,11 +15,13 @@ pub fn text_stream(
     Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "text/event-stream")
-        .body(StreamBody::new(s.map(|s| Ok(Frame::data(s.into())))).boxed())
+        .header(CACHE_CONTROL, "no-cache")
+        .header(CONNECTION, "keep-alive")
+        .body(StreamBody::new(s.map(|s| Ok(Frame::data(format!("data: {s}\n\n").into())))).boxed())
         .unwrap()
 }
 
-pub fn error(e: schemas::Error) -> Response<BoxBody<Bytes, hyper::Error>> {
+pub fn error(e: Error) -> Response<BoxBody<Bytes, hyper::Error>> {
     Response::builder()
         .status(e.status())
         .header(CONTENT_TYPE, "application/json")
@@ -27,8 +29,7 @@ pub fn error(e: schemas::Error) -> Response<BoxBody<Bytes, hyper::Error>> {
         .unwrap()
 }
 
-#[inline]
-fn full(chunk: impl Into<Bytes>) -> BoxBody<Bytes, hyper::Error> {
+pub fn full(chunk: impl Into<Bytes>) -> BoxBody<Bytes, hyper::Error> {
     Full::new(chunk.into())
         .map_err(|never| match never {})
         .boxed()
