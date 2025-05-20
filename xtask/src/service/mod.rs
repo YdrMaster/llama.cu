@@ -1,7 +1,9 @@
-﻿mod response;
-mod schemas;
+﻿mod error;
+mod openai;
+mod response;
 
 use crate::BaseArgs;
+use error::Error;
 use http_body_util::{BodyExt, Empty, combinators::BoxBody};
 use hyper::{
     Method, Request, Response, StatusCode,
@@ -12,19 +14,21 @@ use hyper::{
 use hyper_util::rt::TokioIo;
 use llama_cu::Session;
 use log::{info, warn};
+use openai::{Completions, CompletionsChoice, CompletionsResponse, V1_COMPLETIONS_OBJECT};
 use response::{error, text_stream};
-use schemas::Infer;
 use std::{
     ffi::c_int,
     future::Future,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::PathBuf,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::AtomicUsize},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
+use std::sync::atomic::Ordering::SeqCst;
 #[derive(Args)]
 pub struct ServiceArgs {
     #[clap(flatten)]
@@ -91,24 +95,44 @@ impl HyperService<Request<Incoming>> for App {
     fn call(&self, req: Request<Incoming>) -> Self::Future {
         let session = self.0.clone();
         match (req.method(), req.uri().path()) {
-            (&Method::POST, "/infer") => Box::pin(async move {
+            (&Method::POST, openai::V1_COMPLETIONS) => Box::pin(async move {
                 let whole_body = req.collect().await?.to_bytes();
-                let req = serde_json::from_slice::<Infer>(&whole_body);
+                let req = serde_json::from_slice(&whole_body);
                 Ok(match req {
-                    Ok(Infer { prompt }) => {
+                    Ok(Completions { prompt, model }) => {
                         let (sender, receiver) = mpsc::unbounded_channel();
                         tokio::task::spawn_blocking(move || {
                             let mut session = session.lock().unwrap();
                             let busy_session = session.send(prompt, true);
+
+                            static ID: AtomicUsize = AtomicUsize::new(0);
+
+                            let id = format!("InfiniLM-{:#x}", ID.fetch_add(1, SeqCst));
+                            let created = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs() as usize;
+
                             while let Some(response) = busy_session.receive() {
-                                if sender.send(response).is_err() {
+                                let response = CompletionsResponse {
+                                    id: id.clone(),
+                                    choices: vec![CompletionsChoice {
+                                        index: 0,
+                                        text: response,
+                                    }],
+                                    created,
+                                    model: model.clone(),
+                                    object: V1_COMPLETIONS_OBJECT.into(),
+                                };
+                                let msg = serde_json::to_string(&response).unwrap();
+                                if sender.send(msg).is_err() {
                                     break;
                                 }
                             }
                         });
                         text_stream(UnboundedReceiverStream::new(receiver))
                     }
-                    Err(e) => error(schemas::Error::WrongJson(e)),
+                    Err(e) => error(Error::WrongJson(e)),
                 })
             }),
             // Return 404 Not Found for other routes.
@@ -154,16 +178,18 @@ fn test_post() {
             let mut headers = HeaderMap::new();
             headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
             let req = client
-                .post(format!("http://localhost:{PORT}/infer"))
+                .post(format!("http://localhost:{PORT}{}", openai::V1_COMPLETIONS))
                 .headers(headers)
                 .body(
-                    serde_json::to_string(&Infer {
+                    serde_json::to_string(&Completions {
                         prompt: "Once upon a time,".into(),
+                        model: "model".into(),
                     })
                     .unwrap(),
                 );
 
             let res = req.send().await.unwrap();
+
             if res.status().is_success() {
                 let mut stream = res.bytes_stream();
                 while let Some(item) = stream.next().await {

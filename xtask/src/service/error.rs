@@ -1,17 +1,11 @@
 ﻿use hyper::StatusCode;
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize)]
-pub(crate) struct Infer {
-    pub prompt: String,
-}
 
 #[derive(Debug)]
 pub(crate) enum Error {
     WrongJson(serde_json::Error),
 }
 
-#[derive(Serialize)]
+#[derive(serde::Serialize)]
 struct ErrorBody {
     status: u16,
     code: u16,
