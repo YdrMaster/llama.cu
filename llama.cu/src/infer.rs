@@ -13,10 +13,7 @@ use operators::cuda::{self, ContextSpore, Device};
 use std::{
     ffi::c_int,
     path::Path,
-    sync::{
-        Arc, Barrier,
-        mpsc::{self, Receiver, Sender},
-    },
+    sync::mpsc::{self, Receiver, Sender},
     time::{Duration, Instant},
 };
 use tokeneer::{Bpe, utok};
