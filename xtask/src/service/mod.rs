@@ -22,13 +22,12 @@ use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::PathBuf,
     pin::Pin,
-    sync::{Arc, Mutex, atomic::AtomicUsize},
+    sync::{Arc, Mutex, atomic::AtomicUsize, atomic::Ordering::SeqCst},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::{net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
-use std::sync::atomic::Ordering::SeqCst;
 #[derive(Args)]
 pub struct ServiceArgs {
     #[clap(flatten)]
@@ -111,7 +110,7 @@ impl HyperService<Request<Incoming>> for App {
                             let created = SystemTime::now()
                                 .duration_since(UNIX_EPOCH)
                                 .unwrap()
-                                .as_secs() as usize;
+                                .as_secs() as _;
 
                             while let Some(response) = busy_session.receive() {
                                 let response = CompletionsResponse {
