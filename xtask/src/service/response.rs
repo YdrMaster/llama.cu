@@ -25,11 +25,11 @@ pub fn error(e: Error) -> Response<BoxBody<Bytes, hyper::Error>> {
     Response::builder()
         .status(e.status())
         .header(CONTENT_TYPE, "application/json")
-        .body(full(serde_json::to_string(&e.body()).unwrap()))
+        .body(full(e.body()))
         .unwrap()
 }
 
-pub fn full(chunk: impl Into<Bytes>) -> BoxBody<Bytes, hyper::Error> {
+fn full(chunk: impl Into<Bytes>) -> BoxBody<Bytes, hyper::Error> {
     Full::new(chunk.into())
         .map_err(|never| match never {})
         .boxed()

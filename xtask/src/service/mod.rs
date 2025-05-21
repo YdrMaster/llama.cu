@@ -4,9 +4,9 @@ mod response;
 
 use crate::BaseArgs;
 use error::Error;
-use http_body_util::{BodyExt, Empty, combinators::BoxBody};
+use http_body_util::{BodyExt, combinators::BoxBody};
 use hyper::{
-    Method, Request, Response, StatusCode,
+    Method, Request, Response,
     body::{Bytes, Incoming},
     server::conn::http1,
     service::Service as HyperService,
@@ -98,55 +98,55 @@ impl HyperService<Request<Incoming>> for App {
                 let whole_body = req.collect().await?.to_bytes();
                 let req = serde_json::from_slice(&whole_body);
                 Ok(match req {
-                    Ok(Completions { prompt, model }) => {
-                        let (sender, receiver) = mpsc::unbounded_channel();
-                        tokio::task::spawn_blocking(move || {
-                            let mut session = session.lock().unwrap();
-                            let busy_session = session.send(prompt, true);
-
-                            static ID: AtomicUsize = AtomicUsize::new(0);
-
-                            let id = format!("InfiniLM-{:#x}", ID.fetch_add(1, SeqCst));
-                            let created = SystemTime::now()
-                                .duration_since(UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs() as _;
-
-                            while let Some(response) = busy_session.receive() {
-                                let response = CompletionsResponse {
-                                    id: id.clone(),
-                                    choices: vec![CompletionsChoice {
-                                        index: 0,
-                                        text: response,
-                                    }],
-                                    created,
-                                    model: model.clone(),
-                                    object: V1_COMPLETIONS_OBJECT.into(),
-                                };
-                                let msg = serde_json::to_string(&response).unwrap();
-                                if sender.send(msg).is_err() {
-                                    break;
-                                }
-                            }
-                        });
-                        text_stream(UnboundedReceiverStream::new(receiver))
-                    }
+                    Ok(completions) => complete(completions, session),
                     Err(e) => error(Error::WrongJson(e)),
                 })
             }),
             // Return 404 Not Found for other routes.
-            _ => Box::pin(async move {
-                Ok(Response::builder()
-                    .status(StatusCode::NOT_FOUND)
-                    .body(
-                        Empty::<Bytes>::new()
-                            .map_err(|never| match never {})
-                            .boxed(),
-                    )
-                    .unwrap())
-            }),
+            (method, uri) => {
+                let msg = Error::not_found(method, uri);
+                Box::pin(async move { Ok(error(msg)) })
+            }
         }
     }
+}
+
+fn complete(
+    completions: Completions,
+    session: Arc<Mutex<Session>>,
+) -> Response<BoxBody<Bytes, hyper::Error>> {
+    let Completions { model, prompt } = completions;
+    let (sender, receiver) = mpsc::unbounded_channel();
+    tokio::task::spawn_blocking(move || {
+        let mut session = session.lock().unwrap();
+        let busy_session = session.send(prompt, true);
+
+        static ID: AtomicUsize = AtomicUsize::new(0);
+
+        let id = format!("InfiniLM-{:#x}", ID.fetch_add(1, SeqCst));
+        let created = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as _;
+
+        while let Some(response) = busy_session.receive() {
+            let response = CompletionsResponse {
+                id: id.clone(),
+                choices: vec![CompletionsChoice {
+                    index: 0,
+                    text: response,
+                }],
+                created,
+                model: model.clone(),
+                object: V1_COMPLETIONS_OBJECT.into(),
+            };
+            let msg = serde_json::to_string(&response).unwrap();
+            if sender.send(msg).is_err() {
+                break;
+            }
+        }
+    });
+    text_stream(UnboundedReceiverStream::new(receiver))
 }
 
 #[test]

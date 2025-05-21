@@ -1,44 +1,38 @@
-﻿use hyper::StatusCode;
+﻿use hyper::{Method, StatusCode};
 
 #[derive(Debug)]
 pub(crate) enum Error {
     WrongJson(serde_json::Error),
+    NotFound(NotFoundError),
 }
 
-#[derive(serde::Serialize)]
-struct ErrorBody {
-    status: u16,
-    code: u16,
-    message: String,
+#[derive(serde::Serialize, Debug)]
+pub(crate) struct NotFoundError {
+    method: String,
+    uri: String,
 }
 
 impl Error {
+    pub fn not_found(method: &Method, uri: &str) -> Self {
+        Self::NotFound(NotFoundError {
+            method: method.to_string(),
+            uri: uri.into(),
+        })
+    }
+
     #[inline]
     pub const fn status(&self) -> StatusCode {
         match self {
-            Self::WrongJson(_) => StatusCode::BAD_REQUEST,
+            Self::WrongJson(..) => StatusCode::BAD_REQUEST,
+            Self::NotFound(..) => StatusCode::NOT_FOUND,
         }
     }
 
     #[inline]
-    pub fn body(&self) -> serde_json::Value {
-        macro_rules! error {
-            ($code:expr, $msg:expr) => {
-                ErrorBody {
-                    status: self.status().as_u16(),
-                    code: $code,
-                    message: $msg.into(),
-                }
-            };
-        }
-
-        #[inline]
-        fn json(v: impl serde::Serialize) -> serde_json::Value {
-            serde_json::to_value(v).unwrap()
-        }
-
+    pub fn body(&self) -> String {
         match self {
-            Self::WrongJson(e) => json(error!(0, e.to_string())),
+            Self::WrongJson(e) => e.to_string(),
+            Self::NotFound(e) => serde_json::to_string(&e).unwrap(),
         }
     }
 }
