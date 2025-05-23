@@ -1,12 +1,12 @@
-﻿use crate::exec::KVCache;
-
-use super::{
+﻿use super::{
     super::{Command, Output, Session, SessionId, group::Req},
     SessionStub,
 };
+use crate::exec::KVCache;
 use log::warn;
 use std::{
     collections::BTreeMap,
+    mem::take,
     sync::{
         Arc, Mutex,
         mpsc::{Receiver, Sender, TryRecvError},
@@ -15,7 +15,10 @@ use std::{
 use tokeneer::utok;
 
 #[derive(Default)]
-pub(super) struct EngineManager(BTreeMap<SessionId, SessionStub>);
+pub(super) struct EngineManager {
+    sess: BTreeMap<SessionId, SessionStub>,
+    pre_output: BTreeMap<SessionId, usize>,
+}
 
 #[derive(Default)]
 pub struct Round {
@@ -23,6 +26,7 @@ pub struct Round {
     pub tokens: Vec<utok>,
     pub reqs: Vec<Req<Arc<[Mutex<KVCache>]>>>,
     pub output: Vec<(SessionId, usize)>,
+    pub fast_map: Vec<(usize, usize)>,
     pub no_decode: Vec<Session>,
 }
 
@@ -51,17 +55,21 @@ impl EngineManager {
             };
         }
 
-        while self.0.is_empty() {
-            match commands.recv() {
-                Ok(cmd) => apply!(cmd),
-                Err(_) => return Err(E::ReceiveError),
-            }
+        loop {
             loop {
                 match commands.try_recv() {
                     Ok(cmd) => apply!(cmd),
                     Err(TryRecvError::Disconnected) => return Err(E::ReceiveError),
                     Err(TryRecvError::Empty) => break,
                 }
+            }
+            if self.sess.is_empty() {
+                match commands.recv() {
+                    Ok(cmd) => apply!(cmd),
+                    Err(_) => return Err(E::ReceiveError),
+                }
+            } else {
+                break;
             }
         }
         Ok(())
@@ -70,20 +78,24 @@ impl EngineManager {
     /// 准备推理
     pub fn prepare(&mut self) -> Round {
         let mut ans = Round::default();
-        let sessions = std::mem::take(&mut self.0);
-        for (id, mut stub) in sessions {
+        let mut out_idx = 0;
+
+        let pre_output = take(&mut self.pre_output);
+        for (id, mut stub) in take(&mut self.sess) {
             let max = stub.session.cache.len;
             let pos = stub.session.cache.pos;
             let seq = stub.state.seq;
             let out = stub.state.out;
+            let end = pos + seq;
+            assert_eq!(out, 1, "TODO: chunked prefill");
             // 尝试填充缓存
-            if pos + seq > max {
-                warn!("overflow {}", pos + seq);
+            if end > max {
+                warn!("cache overflow {end} > {max}");
                 // 缓存溢出，不再推理
                 ans.overflow.push(stub.session);
                 continue;
             }
-            stub.session.cache.pos += seq;
+            stub.session.cache.pos = end;
             // 填充推理信息
             ans.output.push((id, out));
             ans.reqs.push(Req {
@@ -93,40 +105,42 @@ impl EngineManager {
             });
             if let Some(prompt) = stub.prompt.take() {
                 // prefill
-                debug_assert_eq!(stub.state.seq, prompt.len());
+                debug_assert_eq!(seq, prompt.len());
                 ans.tokens.extend(prompt);
-                // TODO fast embd
-                // if stub.state.out == 0 {
-                // chunked prefill
-                ans.no_decode.push(stub.session);
-                continue;
+                // if out == 0 {
+                //     // todo!("chunked prefill")
+                //     // ans.no_decode.push(stub.session);
+                //     // continue;
                 // }
+                stub.state.seq = 1
             } else {
                 // decode
-                assert_eq!(stub.state.seq, 1);
-                ans.tokens.push(0);
-                todo!("fast embd")
+                assert_eq!(seq, 1);
+                // fast embd
+                ans.fast_map.push((pre_output[&id], ans.tokens.len()));
+                ans.tokens.push(0)
             }
             // 回填
-            // TODO fast embd
-            // debug_assert!(self.0.insert(id, stub).is_none())
+            assert!(self.sess.insert(id, stub).is_none());
+            assert!(self.pre_output.insert(id, out_idx).is_none());
+            out_idx += out
         }
         ans
     }
 
     pub fn into_stubs(self) -> impl IntoIterator<Item = SessionStub> {
-        self.0.into_values()
+        self.sess.into_values()
     }
 
     fn apply(&mut self, cmd: Command) -> Option<Session> {
         match cmd {
             Command::Insert(req) => {
-                self.0.insert(req.session.id, req.into_stub());
+                self.sess.insert(req.session.id, req.into_stub());
                 None
             }
             Command::Remove(id) => {
                 // fmt
-                self.0.remove(&id).map(|stub| stub.session)
+                self.sess.remove(&id).map(|stub| stub.session)
             }
         }
     }

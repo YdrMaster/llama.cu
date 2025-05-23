@@ -2,6 +2,7 @@
 #[cfg(nccl)]
 mod all_reduce;
 mod embedding;
+mod fast_embedding;
 mod linear;
 mod rms_norm;
 mod rope;
@@ -17,6 +18,7 @@ use operators::cuda::{Stream, VirByte};
 #[cfg(nccl)]
 pub use all_reduce::AllReduce;
 pub use embedding::Embedding;
+pub use fast_embedding::fast_embedding;
 pub use linear::Linear;
 pub use rms_norm::RmsNorm;
 pub use rope::Rope;

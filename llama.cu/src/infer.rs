@@ -3,13 +3,14 @@
     exec::{Command, DistKVCache, Output, Request, Session, SessionId},
     handle::Handle,
     model::{GGufModel, Message, map_files},
-    utils::{destruct, meta},
+    utils::meta,
 };
 use ggus::GGufMetaMapExt;
-use log::info;
+use log::{info, warn};
 use nn::{Distribution, LLaMA, Tensor};
 use operators::cuda::{self, ContextSpore, Device};
 use std::{
+    collections::BTreeMap,
     ffi::c_int,
     path::Path,
     sync::mpsc::{self, Receiver, Sender},
@@ -174,9 +175,9 @@ fn service(
     macro_rules! receive {
         () => {{
             let output = receiver.recv().unwrap();
-            let (sess, next) = process(&devices, output, true);
-            assert!(cache.replace(sess.cache).is_none());
-            next
+            let (output, no_decode) = process(devices[0], output);
+            assert!(no_decode.is_empty());
+            output[&SessionId(0)][0]
         }};
     }
 
@@ -206,7 +207,6 @@ fn service(
         send!(prompt_tokens);
         // 首轮不计时
         let next = receive!();
-        send!(vec![next]);
         response.send(tokeneer.decode(&[next])).unwrap();
         // 循环接收输出
         let mut time = Instant::now();
@@ -217,7 +217,6 @@ fn service(
             if next == eos {
                 break;
             }
-            send!(vec![next]);
             time = Instant::now();
             n_decode += 1;
             // 会话拒绝输出
@@ -227,10 +226,24 @@ fn service(
         }
     }
 
+    println!("break");
+
+    drop(sender);
+    devices[0].retain_primary().apply(|ctx| {
+        for output in receiver {
+            match output {
+                Output::Complete { kv_pair, event, .. } => {
+                    drop((kv_pair.sprout(ctx), event.sprout(ctx)))
+                }
+                Output::Overflow(_) => todo!("overflow"),
+                Output::Removed(_) => warn!("TODO: removed"),
+            }
+        }
+    });
     (duration, n_decode)
 }
 
-fn process(devices: &[Device], output: Output, decode: bool) -> (Session, utok) {
+fn process(device: Device, output: Output) -> (BTreeMap<SessionId, Box<[utok]>>, Box<[Session]>) {
     match output {
         Output::Complete {
             output,
@@ -238,24 +251,10 @@ fn process(devices: &[Device], output: Output, decode: bool) -> (Session, utok) 
             event,
             no_decode,
         } => {
-            destruct!([sess] = no_decode);
-            let next = if decode {
-                devices[sess.id.0].retain_primary().apply(|ctx| {
-                    let output = crate::exec::decode(output, kv_pair, event, &ctx.stream());
-                    destruct!([pair] = output);
-                    let (id, next) = pair;
-                    assert_eq!(id, sess.id);
-                    destruct!([next] = next);
-                    next
-                })
-            } else {
-                devices[sess.id.0].retain_primary().apply(|ctx| {
-                    let _ = kv_pair.sprout(ctx);
-                    let _ = event.sprout(ctx);
-                    0
-                })
-            };
-            (sess, next)
+            let output = device
+                .retain_primary()
+                .apply(|ctx| crate::exec::decode(output, kv_pair, event, &ctx.stream()));
+            (output, no_decode)
         }
         Output::Overflow(_) => todo!("overflow"),
         Output::Removed(_) => todo!("removed"),

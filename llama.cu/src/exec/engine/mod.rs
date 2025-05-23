@@ -5,14 +5,15 @@ use super::{
     group::{ModelGroup, Req},
     output_head::OutputHead,
 };
-use crate::handle::Handle;
+use crate::{handle::Handle, op};
 use engine_manager::{CommandReceiveError, EngineManager, Round};
+use log::warn;
 use nn::{Distribution, LLaMA, Tensor};
 use operators::{
     Operator,
     attention_kv_cached::cuda::Operator as Attn,
     cuda::{ContextResource, CurrentCtx, DevByte, DevMem, Device, Gpu, HostMem, Stream},
-    random_sample::{SampleArgs, cuda::Operator as Sample},
+    random_sample::{KVPair, SampleArgs, cuda::Operator as Sample},
 };
 use std::{
     iter::zip,
@@ -85,13 +86,17 @@ pub(crate) fn engine(
 
         let mut manager = EngineManager::default();
         let mut buf = TokensBuffer::new(ctx, *NTOKS.last().unwrap());
+        let mut pre_kv_pairs = ctx.malloc::<KVPair<()>>(0);
         let stream = ctx.stream();
         loop {
             // 接收指令
             match manager.receive(&commands, &outputs) {
                 Ok(()) => {}
                 Err(CommandReceiveError::SendError) => return,
-                Err(CommandReceiveError::ReceiveError) => break,
+                Err(CommandReceiveError::ReceiveError) => {
+                    warn!("command sender dropped");
+                    break;
+                }
             }
             // 组织请求
             let Round {
@@ -99,6 +104,7 @@ pub(crate) fn engine(
                 tokens,
                 reqs,
                 output,
+                fast_map,
                 no_decode,
             } = manager.prepare();
             if !overflow.is_empty() && outputs.send(Output::Overflow(overflow.into())).is_err() {
@@ -107,8 +113,9 @@ pub(crate) fn engine(
             let toks = buf.set(&tokens, models.padding(tokens.len()), &stream);
             let out_idx = out_idx(&reqs, output.iter().map(|(_, len)| *len), ctx);
             // 推理
+            op::fast_embedding(&mut handle, toks, &pre_kv_pairs, fast_map, &stream);
             let x = models.launch(toks, &reqs, &mut handle, &stream);
-            let kv_pair = output_head.launch(
+            let kv_pairs = output_head.launch(
                 x,
                 out_idx,
                 output
@@ -117,9 +124,13 @@ pub(crate) fn engine(
                 &mut handle,
                 &stream,
             );
+            pre_kv_pairs = stream
+                .free(pre_kv_pairs)
+                .malloc::<KVPair<()>>(kv_pairs.len() / size_of::<KVPair<()>>());
+            stream.memcpy_d2d(&mut pre_kv_pairs, &kv_pairs);
             let output = Output::Complete {
                 output: output.into(),
-                kv_pair: kv_pair.sporulate(),
+                kv_pair: kv_pairs.sporulate(),
                 event: stream.record().sporulate(),
                 no_decode: no_decode.into(),
             };
@@ -172,7 +183,7 @@ impl<'ctx> TokensBuffer<'ctx> {
 }
 
 impl TokensBuffer<'_> {
-    pub fn set(&mut self, tokens: &[utok], padding: usize, stream: &Stream) -> &[DevByte] {
+    pub fn set(&mut self, tokens: &[utok], padding: usize, stream: &Stream) -> &mut [DevByte] {
         let len = size_of_val(tokens);
         let padding = padding * size_of::<utok>();
 
