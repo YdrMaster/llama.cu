@@ -1,49 +1,67 @@
-﻿use super::{model::ModelExec, output_head::OutputHead};
+﻿use super::{KVCache, model::ModelExec};
 use crate::{handle::Handle, memory::MemPages};
 use log::debug;
-use nn::{NNGraph, Tensor};
+use nn::{
+    Dim, Distribution, Graph, GraphBuilder, LLaMA, NNGraph, Tensor, TensorMeta,
+    digit_layout::types, op,
+};
 use operators::{
     attention_kv_cached::cuda::Operator as Attn,
-    cuda::{DevMem, Stream, VirByte},
-    random_sample::{SampleArgs, cuda::Operator as Sample},
+    cuda::{DevByte, Stream, VirByte, VirMem},
 };
 use std::{
     collections::BTreeMap,
     num::NonZeroUsize,
-    sync::{Arc, Barrier},
+    sync::{Arc, Barrier, Mutex},
     time::Instant,
 };
 use tokeneer::utok;
 
 #[derive(Clone)]
-pub(crate) struct Request {
-    pub kv_cache: Tensor<*const VirByte, 2>,
+pub(crate) struct Req<Cache> {
+    pub kv_cache: Cache,
     pub pos: usize,
     pub seq: usize,
-    pub out: usize,
-    pub sample_args: SampleArgs,
 }
 
 pub(crate) struct ModelGroup<'ctx> {
     models: BTreeMap<NonZeroUsize, ModelExec<'ctx>>,
     mapped: Option<NonZeroUsize>,
     attn: Attn,
-    output_head: OutputHead<'ctx>,
+    pages: MemPages,
+    _weight: VirMem,
 }
 
 impl<'ctx> ModelGroup<'ctx> {
     pub fn new(
-        n_toks: impl IntoIterator<Item = usize>,
-        graph: &NNGraph<Tensor<*const VirByte, 2>>,
-        output_head: nn::OutputHead<Tensor<&[u8], 2>>,
+        llama: LLaMA<Tensor<&[u8], 2>>,
+        dist: Distribution,
+
         attn: Attn,
-        sample: Sample,
+        n_toks: impl IntoIterator<Item = usize>,
         handle: &mut Handle<'ctx>,
-        pages: &mut MemPages,
         barrier: Option<Arc<Barrier>>,
         use_cuda_graph: bool,
     ) -> Self {
-        let idev = pages.dev().index();
+        let NNGraph(Graph { topo, nodes, edges }) = builder()
+            .build(
+                llama.tensor_parallel(dist),
+                [
+                    TensorMeta::new(types::U32, [Dim::var("n_tok")]),
+                    TensorMeta::new(types::U32, [Dim::var("n_tok")]),
+                ],
+            )
+            .unwrap();
+
+        // 权重加载
+        let dev = handle.ctx.dev();
+        let mut pages = MemPages::new(dev);
+        let (_weight, edges) = pages.load_weight(&dev, edges);
+
+        // 推理
+        let graph = NNGraph(Graph { topo, nodes, edges });
+
+        let idev = dev.index();
         debug!("compiling model group @{idev}");
         let time = Instant::now();
         let models = n_toks
@@ -55,7 +73,7 @@ impl<'ctx> ModelGroup<'ctx> {
                         graph.clone(),
                         n_tok,
                         handle,
-                        pages,
+                        &mut pages,
                         barrier.clone(),
                         use_cuda_graph,
                     ),
@@ -71,30 +89,33 @@ impl<'ctx> ModelGroup<'ctx> {
             models,
             mapped: None,
             attn,
-            output_head: OutputHead::new(output_head, sample, handle.ctx),
+            pages,
+            _weight,
         }
+    }
+
+    pub fn padding(&self, len: usize) -> usize {
+        let len = NonZeroUsize::new(len).unwrap();
+        let (ans, _) = self.models.range(len..).next().unwrap();
+        ans.get()
     }
 
     pub fn launch(
         &mut self,
-        toks: &[utok],
-        reqs: &[Request],
+        toks: &[DevByte],
+        reqs: &[Req<Arc<[Mutex<KVCache>]>>],
         handle: &mut Handle,
-        pages: &mut MemPages,
         stream: &Stream<'ctx>,
-    ) -> DevMem<'ctx> {
+    ) -> Tensor<*const VirByte, 2> {
         let Self {
             models,
             mapped,
             attn,
-            output_head,
+            pages,
+            ..
         } = self;
 
-        let Some(len) = NonZeroUsize::new(toks.len()) else {
-            return stream.malloc::<u8>(0);
-        };
-
-        let (&key, _) = models.range_mut(len..).next().unwrap();
+        let key = NonZeroUsize::new(toks.len() / size_of::<utok>()).unwrap();
         let map = match mapped {
             Some(mapped) => {
                 if *mapped != key {
@@ -111,6 +132,39 @@ impl<'ctx> ModelGroup<'ctx> {
             *mapped = Some(key);
             model.map(pages)
         }
-        model.launch(attn, handle, output_head, toks, reqs, stream)
+        let mut reqs = reqs
+            .iter()
+            .map(|req| Req {
+                kv_cache: req.kv_cache[handle.rank()].lock().unwrap(),
+                pos: req.pos,
+                seq: req.seq,
+            })
+            .collect::<Vec<_>>();
+        let reqs = reqs
+            .iter_mut()
+            .map(|req| {
+                req.kv_cache.update(req.pos, req.pos + req.seq, pages);
+                Req {
+                    kv_cache: req.kv_cache.as_tensor(),
+                    pos: req.pos,
+                    seq: req.seq,
+                }
+            })
+            .collect::<Vec<_>>();
+        model.launch(attn, handle, toks, &reqs, stream)
     }
+}
+
+fn builder() -> GraphBuilder {
+    let mut ans = GraphBuilder::default();
+    ans.register_op("embedding", op::embedding::Embedding)
+        .register_op("rms-norm", op::normalization::RmsNorm)
+        .register_op("linear", op::linear::Linear)
+        .register_op("rope", op::rope::Rope)
+        .register_op("attention", op::attention::Attention)
+        .register_op("swiglu", op::activation::SwiGLU)
+        .register_op("concat", op::concat::Concat)
+        .register_op("split", op::split::Split)
+        .register_op("all-reduce", op::all_reduce::AllReduce);
+    ans
 }

@@ -5,7 +5,7 @@ use crate::memory::MemPages;
 use bytesize::ByteSize;
 use log::{debug, trace};
 use nn::{Edge, TPAction, TPTensor, Tensor};
-use operators::cuda::{DevByte, Stream, VirByte, VirMem};
+use operators::cuda::{DevByte, Device, Stream, VirByte, VirMem};
 use range_collector::RangeCollector;
 use std::{
     collections::HashSet,
@@ -22,12 +22,11 @@ type VirTensor = Tensor<*const VirByte, 2>;
 impl MemPages {
     pub fn load_weight(
         &mut self,
+        dev: &Device,
         edges: Box<[Edge<HostTPTensor>]>,
     ) -> (VirMem, Box<[Edge<VirTensor>]>) {
         // 排布权重存储
-        let align = Some(self.dev().alignment())
-            .filter(|&n| n > 0)
-            .unwrap_or(512);
+        let align = Some(dev.alignment()).filter(|&n| n > 0).unwrap_or(512);
         let mut ranges = RangeCollector::new(align);
         for nn::Edge { external, .. } in &edges {
             if let Some(nn::External { item, .. }) = external {
@@ -43,7 +42,7 @@ impl MemPages {
         let time = Instant::now();
         let mut weight = self.reserve_vir(ranges.size());
         let mapped = weight.map(0, self.prop().create(weight.len()));
-        let edges = self.dev().context().apply(|ctx| {
+        let edges = dev.context().apply(|ctx| {
             let mut loader = WeightLoader::new(
                 ranges
                     .sizes()
@@ -63,12 +62,7 @@ impl MemPages {
                 })
                 .collect::<Box<_>>()
         });
-        fmt_log(
-            self.dev().index(),
-            edges.len(),
-            weight.len(),
-            time.elapsed(),
-        );
+        fmt_log(dev.index(), edges.len(), weight.len(), time.elapsed());
         (weight, edges)
     }
 }

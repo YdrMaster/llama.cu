@@ -44,4 +44,8 @@ impl<'ctx> Handle<'ctx> {
             self.ctx.load(&ptx)
         })
     }
+
+    pub fn rank(&self) -> usize {
+        if cfg!(nccl) { todo!() } else { 0 }
+    }
 }

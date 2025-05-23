@@ -5,7 +5,6 @@ use std::{
 };
 
 pub(crate) struct MemPages {
-    dev: Device,
     prop: MemProp,
     size: usize,
     pool: Vec<Arc<PhyMem>>,
@@ -16,17 +15,7 @@ impl MemPages {
         let prop = dev.mem_prop();
         let size = prop.granularity_minimum();
         let pool = Vec::new();
-        Self {
-            dev,
-            prop,
-            size,
-            pool,
-        }
-    }
-
-    #[inline(always)]
-    pub const fn dev(&self) -> &Device {
-        &self.dev
+        Self { prop, size, pool }
     }
 
     #[inline(always)]

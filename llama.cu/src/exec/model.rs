@@ -1,26 +1,24 @@
-﻿use super::{group::Request, output_head::OutputHead, step::Step};
+﻿use super::{group::Req, step::Step};
 use crate::{
     handle::Handle,
     memory::MemPages,
     upos,
-    utils::{self, cast_slice_mut, destruct},
+    utils::{self, destruct},
 };
 use bytesize::ByteSize;
 use log::trace;
 use nn::{NNGraph, Tensor};
 use operators::{
     attention_kv_cached::cuda::Operator as Attn,
-    cuda::{CurrentCtx, DevMem, HostMem, Stream, VirByte, VirMem, memcpy_h2d},
+    cuda::{DevByte, Stream, VirByte, VirMem},
 };
 use std::{
-    iter::zip,
     sync::{Arc, Barrier},
     time::Instant,
 };
 use tokeneer::utok;
 
 pub(super) struct ModelExec<'ctx> {
-    n_tok: usize,
     execs: Box<[Step<'ctx>]>,
     workspace: VirMem,
     inputs: Box<[Tensor<*const VirByte, 2>]>,
@@ -73,7 +71,7 @@ impl<'ctx> ModelExec<'ctx> {
         let execs = handle.build_steps(exec, use_cuda_graph);
         trace!(
             "model compiled @{} in {:.2?}, seq len = {n_tok}, workspace = {}",
-            pages.dev().index(),
+            handle.ctx.dev().index(),
             time.elapsed(),
             ByteSize::b(workspace.len() as _).display(),
         );
@@ -82,7 +80,6 @@ impl<'ctx> ModelExec<'ctx> {
         pages.unmap(&mut workspace, ..);
 
         Self {
-            n_tok,
             execs,
             workspace,
             inputs,
@@ -107,22 +104,23 @@ impl ModelExec<'_> {
         &mut self,
         attn: &Attn,
         handle: &mut Handle,
-        output_head: &mut OutputHead,
-        toks: &[utok],
-        reqs: &[Request],
+        toks: &[DevByte],
+        reqs: &[Req<Tensor<*const VirByte, 2>>],
         stream: &Stream<'ctx>,
-    ) -> DevMem<'ctx> {
-        // 初始化输入
-        let (n_out, [padding, pos, out_idx]) = fill_inputs(self.n_tok, toks, reqs, stream.ctx());
-
+    ) -> Tensor<*const VirByte, 2> {
+        let padding = toks.len() / size_of::<utok>();
+        let mut pos_locked = stream.ctx().malloc_host::<upos>(padding);
+        let ([], pos, []) = (unsafe { pos_locked.align_to_mut::<upos>() }) else {
+            unreachable!()
+        };
+        reqs.iter()
+            .flat_map(|req| req.pos..req.pos + req.seq)
+            .enumerate()
+            .for_each(|(i, val)| pos[i] = val as _);
         // 拷贝到硬件
-        for (input, data) in zip(&self.inputs, [padding, pos]) {
-            let ptr = input.get().cast_mut();
-            memcpy_h2d(
-                unsafe { std::slice::from_raw_parts_mut(ptr.cast(), data.len()) },
-                &data,
-            )
-        }
+        stream
+            .memcpy_h2d(as_mapped(&self.inputs[1]), &pos_locked)
+            .memcpy_d2d(as_mapped(&self.inputs[0]), toks);
         // 执行
         if let Some(barrier) = &self.barrier {
             barrier.wait();
@@ -143,48 +141,13 @@ impl ModelExec<'_> {
             }
         }
         destruct!([x] = self.outputs.clone());
-        output_head.launch(
-            x,
-            out_idx,
-            n_out,
-            reqs.iter()
-                .flat_map(|req| std::iter::repeat_n(req.sample_args, req.out)),
-            handle,
-            stream,
-        )
+        x
     }
 }
 
-/// 构造输入数据
-fn fill_inputs<'ctx>(
-    padding: usize,
-    toks: &[utok],
-    reqs: &[Request],
-    ctx: &'ctx CurrentCtx,
-) -> (usize, [HostMem<'ctx>; 3]) {
-    let mut ans0 = ctx.malloc_host::<utok>(padding);
-    let mut ans1 = ctx.malloc_host::<upos>(padding);
-    let mut ans2 = ctx.malloc_host::<utok>(padding);
-
-    let tokens: &mut [utok] = cast_slice_mut(&mut ans0);
-    let pos: &mut [upos] = cast_slice_mut(&mut ans1);
-    let out_idx: &mut [utok] = cast_slice_mut(&mut ans2);
-    let mut itok = 0;
-    let mut iout = 0;
-    for req in reqs {
-        for i in 0..req.seq {
-            if i >= req.seq - req.out {
-                out_idx[iout] = itok as _;
-                iout += 1
-            }
-
-            pos[itok] = (req.pos + i) as _;
-            itok += 1
-        }
-    }
-    tokens[..itok].copy_from_slice(toks);
-    tokens[itok..].fill(0);
-    pos[itok..].fill(0);
-
-    (iout, [ans0, ans1, ans2])
+#[allow(clippy::mut_from_ref)]
+fn as_mapped(input: &Tensor<*const VirByte, 2>) -> &mut [DevByte] {
+    let ptr = input.get().cast_mut();
+    let len = Tensor::use_info(input).take();
+    unsafe { std::slice::from_raw_parts_mut(ptr.cast(), len) }
 }

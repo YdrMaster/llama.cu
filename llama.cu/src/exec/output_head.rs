@@ -15,6 +15,7 @@ use operators::{
         cuda::Operator as Sample,
     },
 };
+use tokeneer::utok;
 
 pub(super) struct OutputHead<'ctx> {
     norm: Tensor<DevMem<'ctx>, 2>,
@@ -71,7 +72,6 @@ impl OutputHead<'_> {
         &self,
         x: Tensor<*const VirByte, 2>,
         out_idx: HostMem,
-        n_out: usize,
         config: impl IntoIterator<Item = Config>,
         handle: &mut Handle,
         stream: &Stream<'ctx>,
@@ -85,9 +85,11 @@ impl OutputHead<'_> {
         } = self;
         dims!([_, d] = x);
         let out_idx = stream.from_host::<u8>(&out_idx);
-        let out_idx = Tensor::from_dim_slice(types::U32, [n_out]).map(|_| out_idx.as_ptr().cast());
+        let out_len = out_idx.len() / size_of::<utok>();
+        let out_idx =
+            Tensor::from_dim_slice(types::U32, [out_len]).map(|_| out_idx.as_ptr().cast());
         // gather
-        let mut out = Tensor::new(x.dt(), [n_out, d]).map(|len| stream.malloc::<u8>(len));
+        let mut out = Tensor::new(x.dt(), [out_len, d]).map(|len| stream.malloc::<u8>(len));
         let out = out.as_mut().map(|mem| mem.as_ptr().cast());
         op::Embedding::launch(handle, None, [x, out_idx], [out.clone()], stream);
         // norm
@@ -101,7 +103,7 @@ impl OutputHead<'_> {
         );
         // linear
         dims!([nvoc, _] = linear);
-        let mut logits = Tensor::new(out.dt(), [n_out, nvoc]).map(|len| stream.malloc::<u8>(len));
+        let mut logits = Tensor::new(out.dt(), [out_len, nvoc]).map(|len| stream.malloc::<u8>(len));
         let logits = logits.as_mut().map(|mem| mem.as_ptr().cast());
         let lm_head = linear.as_ref().map(|mem| mem.as_ptr().cast());
         op::Linear::launch(
@@ -111,7 +113,7 @@ impl OutputHead<'_> {
             [logits.clone()],
             stream,
         );
-        let mut kv_pair = stream.malloc::<KVPair<()>>(n_out);
+        let mut kv_pair = stream.malloc::<KVPair<()>>(out_len);
         for (i, config) in config.into_iter().enumerate() {
             let logit = logits.clone().transform(|layout| layout.index(0, i));
             let kv_pair = &mut kv_pair[i * size_of::<KVPair<()>>()..];

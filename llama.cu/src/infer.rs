@@ -1,8 +1,7 @@
 ﻿use crate::{
     Task,
-    exec::{Command, KVCache, Output, Request, Session, SessionId},
+    exec::{Command, DistKVCache, Output, Request, Session, SessionId},
     handle::Handle,
-    memory::MemPages,
     model::{GGufModel, Message, map_files},
     utils::{destruct, meta},
 };
@@ -40,18 +39,20 @@ pub fn infer(
 
     std::thread::scope(|s| {
         let devices = gpus.iter().cloned().map(Device::new).collect();
-        let mut senders = Vec::new();
         let (outputs, receiver) = mpsc::channel();
 
         match gpus {
             &[] => unreachable!(),
             &[index] => {
                 let (sender, commands) = mpsc::channel();
-                senders.push(sender);
 
                 let dev = Device::new(index);
                 let _worker =
                     s.spawn(move || launch_mono(llama, dev, commands, outputs, use_cuda_grpah));
+
+                service(
+                    requests, session, devices, sender, receiver, &gguf, max_steps,
+                )
             }
             #[cfg(not(nccl))]
             [..] => panic!("nccl not found"),
@@ -89,16 +90,6 @@ pub fn infer(
                     .collect::<Box<_>>();
             }
         }
-
-        service(
-            requests,
-            session,
-            devices,
-            senders.into(),
-            receiver,
-            &gguf,
-            max_steps,
-        )
     })
 }
 
@@ -147,7 +138,7 @@ fn service(
     requests: Receiver<Task>,
     session: Sender<Receiver<String>>,
     devices: Box<[Device]>,
-    senders: Box<[Sender<Command>]>,
+    sender: Sender<Command>,
     receiver: Receiver<Output>,
     gguf: &GGufModel,
     max_steps: usize,
@@ -159,47 +150,32 @@ fn service(
     let mut duration = Duration::ZERO;
     let mut n_decode = 1;
 
-    let mut cache = devices
-        .iter()
-        .map(|dev| {
-            Some(KVCache::new(
-                &cache_template,
-                1,
-                senders.len(),
-                &MemPages::new(Device::new(dev.index())),
-            ))
-        })
-        .collect::<Box<_>>();
+    let mut cache = Some(DistKVCache::new(
+        &cache_template,
+        &devices.iter().map(|dev| (*dev, 1)).collect::<Vec<_>>(),
+    ));
 
-    macro_rules! send_all {
+    macro_rules! send {
         ($prompt:expr) => {
-            for (i, sender) in senders.iter().enumerate() {
-                sender
-                    .send(Command::Insert(Request {
-                        session: Session {
-                            id: SessionId(i),
-                            sample_args: Default::default(),
-                            cache: cache[i].take().unwrap(),
-                        },
-                        prompt: $prompt.to_vec().into(),
-                        out: 1,
-                    }))
-                    .unwrap()
-            }
+            sender
+                .send(Command::Insert(Request {
+                    session: Session {
+                        id: SessionId(0),
+                        sample_args: Default::default(),
+                        cache: cache.take().unwrap(),
+                    },
+                    prompt: $prompt.into(),
+                    out: 1,
+                }))
+                .unwrap()
         };
     }
 
-    macro_rules! receive_all {
+    macro_rules! receive {
         () => {{
-            let mut next = u32::MAX;
-            while cache.iter().any(Option::is_none) {
-                let output = receiver.recv().unwrap();
-                let (sess, next_) = process(&devices, output, next == u32::MAX);
-                if next == u32::MAX {
-                    next = next_;
-                }
-                cache[sess.id.0] = Some(sess.cache);
-            }
+            let output = receiver.recv().unwrap();
+            let (sess, next) = process(&devices, output, true);
+            assert!(cache.replace(sess.cache).is_none());
             next
         }};
     }
@@ -227,21 +203,21 @@ fn service(
         session.send(busy_session).unwrap();
         // 发送提示词
         let prompt_tokens = tokeneer.encode(&prompt);
-        send_all!(&prompt_tokens);
+        send!(prompt_tokens);
         // 首轮不计时
-        let next = receive_all!();
-        send_all!(&[next]);
+        let next = receive!();
+        send!(vec![next]);
         response.send(tokeneer.decode(&[next])).unwrap();
         // 循环接收输出
         let mut time = Instant::now();
         for _ in 0..max_steps - 1 {
-            let next = receive_all!();
+            let next = receive!();
             duration += time.elapsed();
             // 收到休止符
             if next == eos {
                 break;
             }
-            send_all!(&[next]);
+            send!(vec![next]);
             time = Instant::now();
             n_decode += 1;
             // 会话拒绝输出
@@ -250,9 +226,6 @@ fn service(
             }
         }
     }
-
-    drop(senders);
-    let _ = receive_all!();
 
     (duration, n_decode)
 }

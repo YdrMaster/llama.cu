@@ -1,4 +1,4 @@
-﻿use super::group::Request;
+﻿use super::group::Req;
 use crate::{
     handle::Handle,
     op::{self, Operator as _},
@@ -141,7 +141,7 @@ impl<'ctx> Handle<'ctx> {
         &mut self,
         op: &Attn,
         attn: &Attention,
-        reqs: &[Request],
+        reqs: &[Req<Tensor<*const VirByte, 2>>],
         stream: &Stream,
     ) {
         let Attention { iblk, q, k, v, o } = attn;

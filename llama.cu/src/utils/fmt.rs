@@ -8,6 +8,7 @@ use std::fmt;
 pub(crate) fn fmt<const N: usize>(tensor: &Tensor<*const VirByte, N>, _ctx: &CurrentCtx) {
     let mem_range = tensor.layout().data_range();
     let ptr = tensor.get().cast::<DevByte>();
+    println!("ptr = {ptr:p}");
     let len = *mem_range.end() as usize + tensor.dt().nbytes();
     let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
     let mut host = Blob::new(len);

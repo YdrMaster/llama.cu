@@ -4,18 +4,10 @@ use operators::cuda::{VirByte, VirMem};
 
 pub(crate) struct KVCache {
     /// 基于虚地址的 cache 张量
-    tensor: Tensor<*const VirByte, 2>,
-    /// cache 占用的地址区域
-    vir: VirMem,
+    tensor: Tensor<VirMem, 2>,
     /// cache 中每个 token 的尺寸
     size_per_token: usize,
-    /// 每个页的大小
-    page_size: usize,
-    /// 已占用的容量
-    pos: usize,
 }
-
-unsafe impl Send for KVCache {}
 
 impl KVCache {
     pub fn new(template: &Tensor<usize, 2>, len: usize, total: usize, pages: &MemPages) -> Self {
@@ -24,55 +16,38 @@ impl KVCache {
         let template = Tensor::from_dim_slice(template.dt(), &shape);
 
         let size_per_token = template.get() / template.shape()[0];
-        let vir = pages.reserve_vir(*template.get());
         // 转置 [nctx, nblk, 2, nkvh, dh] -> [nkvh, nblk, 2, nctx, dh]
         let tensor = template
-            .map(|_| vir.as_ptr())
+            .map(|len| pages.reserve_vir(len))
             .transform(|layout| layout.transpose(&[3, 0]));
 
         Self {
             tensor,
-            vir,
             size_per_token,
-            page_size: pages.page_size(),
-            pos: 0,
         }
     }
 
     /// 更新 kv cache，使之可容纳 len 个 token
-    pub fn update(&mut self, len: usize, pages: &mut MemPages) -> bool {
-        if len > self.buf_len() {
-            return false;
-        }
+    pub fn update(&mut self, pos: usize, len: usize, pages: &mut MemPages) {
+        assert!(len <= self.buf_len());
 
-        let &mut Self {
-            ref mut vir,
-            pos,
-            size_per_token,
-            page_size,
-            ..
-        } = self;
+        let size_per_token = self.size_per_token;
+        let page_size = pages.page_size();
         // 计算页数
         let mapped = (pos * size_per_token).div_ceil(page_size);
         let target = (len * size_per_token).div_ceil(page_size);
         // 映射物理页，多退少补
         use std::cmp::Ordering::{Equal, Greater, Less};
+        let mem = self.tensor.get_mut();
         match mapped.cmp(&target) {
-            Less => pages.map(vir, mapped..target),
-            Greater => pages.unmap(vir, target..mapped),
+            Less => pages.map(mem, mapped..target),
+            Greater => pages.unmap(mem, target..mapped),
             Equal => {}
         }
-        // 更新位置
-        self.pos = len;
-        true
     }
 
-    pub const fn as_tensor(&self) -> &Tensor<*const VirByte, 2> {
-        &self.tensor
-    }
-
-    pub const fn pos(&self) -> usize {
-        self.pos
+    pub fn as_tensor(&self) -> Tensor<*const VirByte, 2> {
+        self.tensor.as_ref().map(|vir| vir.as_ptr())
     }
 
     /// kv cache 虚地址空间容量
