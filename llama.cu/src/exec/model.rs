@@ -10,7 +10,7 @@ use log::trace;
 use nn::{NNGraph, Tensor};
 use operators::{
     attention_kv_cached::cuda::Operator as Attn,
-    cuda::{DevByte, Stream, VirByte, VirMem},
+    cuda::{DevByte, HostMem, Stream, VirByte, VirMem},
 };
 use std::{
     sync::{Arc, Barrier},
@@ -19,6 +19,8 @@ use std::{
 use tokeneer::utok;
 
 pub(super) struct ModelExec<'ctx> {
+    buf_tok: HostMem<'ctx>,
+    buf_pos: HostMem<'ctx>,
     execs: Box<[Step<'ctx>]>,
     workspace: VirMem,
     inputs: Box<[Tensor<*const VirByte, 2>]>,
@@ -80,6 +82,8 @@ impl<'ctx> ModelExec<'ctx> {
         pages.unmap(&mut workspace, ..);
 
         Self {
+            buf_tok: handle.ctx.malloc_host::<utok>(n_tok),
+            buf_pos: handle.ctx.malloc_host::<upos>(n_tok),
             execs,
             workspace,
             inputs,
@@ -100,27 +104,37 @@ impl ModelExec<'_> {
         pages.unmap(&mut self.workspace, ..)
     }
 
-    pub fn launch<'ctx>(
+    pub fn load_inputs<T>(
         &mut self,
-        attn: &Attn,
-        handle: &mut Handle,
-        toks: &[DevByte],
-        reqs: &[Req<Tensor<*const VirByte, 2>>],
-        stream: &Stream<'ctx>,
-    ) -> Tensor<*const VirByte, 2> {
-        let padding = toks.len() / size_of::<utok>();
-        let mut pos_locked = stream.ctx().malloc_host::<upos>(padding);
-        let ([], pos, []) = (unsafe { pos_locked.align_to_mut::<upos>() }) else {
+        toks: &[utok],
+        reqs: &[Req<T>],
+        loading: &Stream,
+    ) -> &mut [DevByte] {
+        // load tokens
+        let len = size_of_val(toks);
+        unsafe {
+            std::ptr::copy_nonoverlapping(toks.as_ptr().cast(), self.buf_tok.as_mut_ptr(), len)
+        };
+        loading.memcpy_h2d(as_mapped(&self.inputs[0]), &self.buf_tok);
+        // load pos
+        let ([], pos, []) = (unsafe { self.buf_pos.align_to_mut::<upos>() }) else {
             unreachable!()
         };
         reqs.iter()
             .flat_map(|req| req.pos..req.pos + req.seq)
             .enumerate()
             .for_each(|(i, val)| pos[i] = val as _);
-        // 拷贝到硬件
-        stream
-            .memcpy_h2d(as_mapped(&self.inputs[1]), &pos_locked)
-            .memcpy_d2d(as_mapped(&self.inputs[0]), toks);
+        loading.memcpy_h2d(as_mapped(&self.inputs[1]), pos);
+        as_mapped(&self.inputs[0])
+    }
+
+    pub fn launch<'ctx>(
+        &mut self,
+        attn: &Attn,
+        handle: &mut Handle,
+        reqs: &[Req<Tensor<*const VirByte, 2>>],
+        stream: &Stream<'ctx>,
+    ) -> Tensor<*const VirByte, 2> {
         // 执行
         if let Some(barrier) = &self.barrier {
             barrier.wait();

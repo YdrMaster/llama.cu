@@ -4,8 +4,10 @@
 };
 use crate::exec::KVCache;
 use log::warn;
+use operators::random_sample::SampleArgs;
 use std::{
     collections::BTreeMap,
+    iter::repeat_n,
     mem::take,
     sync::{
         Arc, Mutex,
@@ -25,6 +27,7 @@ pub struct Round {
     pub overflow: Vec<Session>,
     pub tokens: Vec<utok>,
     pub reqs: Vec<Req<Arc<[Mutex<KVCache>]>>>,
+    pub sample: Vec<SampleArgs>,
     pub output: Vec<(SessionId, usize)>,
     pub fast_map: Vec<(usize, usize)>,
     pub no_decode: Vec<Session>,
@@ -56,6 +59,7 @@ impl EngineManager {
         }
 
         loop {
+            // 总是尝试进行非阻塞接收
             loop {
                 match commands.try_recv() {
                     Ok(cmd) => apply!(cmd),
@@ -63,16 +67,18 @@ impl EngineManager {
                     Err(TryRecvError::Empty) => break,
                 }
             }
+            // 没有待处理的命令
             if self.sess.is_empty() {
+                // 也没有待处理的任务，阻塞等待
                 match commands.recv() {
                     Ok(cmd) => apply!(cmd),
-                    Err(_) => return Err(E::ReceiveError),
+                    Err(_) => break Err(E::ReceiveError),
                 }
             } else {
-                break;
+                // 有待处理的任务，退出循环
+                break Ok(());
             }
         }
-        Ok(())
     }
 
     /// 准备推理
@@ -97,6 +103,7 @@ impl EngineManager {
             }
             stub.session.cache.pos = end;
             // 填充推理信息
+            ans.sample.extend(repeat_n(stub.session.sample_args, out));
             ans.output.push((id, out));
             ans.reqs.push(Req {
                 kv_cache: stub.session.cache.parts.clone(),

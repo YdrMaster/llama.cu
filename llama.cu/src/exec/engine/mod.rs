@@ -5,15 +5,15 @@ use super::{
     group::{ModelGroup, Req},
     output_head::OutputHead,
 };
-use crate::{handle::Handle, op};
+use crate::{handle::Handle, op::FastEmbedding};
 use engine_manager::{CommandReceiveError, EngineManager, Round};
 use log::warn;
 use nn::{Distribution, LLaMA, Tensor};
 use operators::{
     Operator,
     attention_kv_cached::cuda::Operator as Attn,
-    cuda::{ContextResource, CurrentCtx, DevByte, DevMem, Device, Gpu, HostMem, Stream},
-    random_sample::{KVPair, SampleArgs, cuda::Operator as Sample},
+    cuda::{ContextResource, CurrentCtx, Device, Gpu, HostMem},
+    random_sample::{KVPair, cuda::Operator as Sample},
 };
 use std::{
     iter::zip,
@@ -85,8 +85,10 @@ pub(crate) fn engine(
         );
 
         let mut manager = EngineManager::default();
-        let mut buf = TokensBuffer::new(ctx, *NTOKS.last().unwrap());
-        let mut pre_kv_pairs = ctx.malloc::<KVPair<()>>(0);
+        let max_tok = *NTOKS.last().unwrap();
+        let mut fast_embd = FastEmbedding::new(max_tok, ctx);
+        let mut pre_kv_pairs = ctx.malloc::<KVPair<()>>(max_tok);
+        let loading = ctx.stream();
         let stream = ctx.stream();
         loop {
             // 接收指令
@@ -103,6 +105,7 @@ pub(crate) fn engine(
                 overflow,
                 tokens,
                 reqs,
+                sample,
                 output,
                 fast_map,
                 no_decode,
@@ -110,24 +113,13 @@ pub(crate) fn engine(
             if !overflow.is_empty() && outputs.send(Output::Overflow(overflow.into())).is_err() {
                 return;
             }
-            let toks = buf.set(&tokens, models.padding(tokens.len()), &stream);
             let out_idx = out_idx(&reqs, output.iter().map(|(_, len)| *len), ctx);
             // 推理
-            op::fast_embedding(&mut handle, toks, &pre_kv_pairs, fast_map, &stream);
-            let x = models.launch(toks, &reqs, &mut handle, &stream);
-            let kv_pairs = output_head.launch(
-                x,
-                out_idx,
-                output
-                    .iter()
-                    .flat_map(|(_, out)| std::iter::repeat_n(SampleArgs::default(), *out)),
-                &mut handle,
-                &stream,
-            );
-            pre_kv_pairs = stream
-                .free(pre_kv_pairs)
-                .malloc::<KVPair<()>>(kv_pairs.len() / size_of::<KVPair<()>>());
-            stream.memcpy_d2d(&mut pre_kv_pairs, &kv_pairs);
+            let (key, tok) = models.load_inputs(&tokens, &reqs, &loading);
+            fast_embd.launch(tok, &pre_kv_pairs, fast_map, &mut handle, &loading, &stream);
+            let x = models.launch(key, &reqs, &mut handle, &stream);
+            let kv_pairs = output_head.launch(x, out_idx, sample, &mut handle, &stream);
+            stream.memcpy_d2d(&mut pre_kv_pairs[..kv_pairs.len()], &kv_pairs);
             let output = Output::Complete {
                 output: output.into(),
                 kv_pair: kv_pairs.sporulate(),
@@ -166,34 +158,4 @@ fn out_idx<'ctx, T>(
     let len = size_of_val(out_idx.as_slice());
     ans.copy_from_slice(unsafe { std::slice::from_raw_parts(ptr, len) });
     ans
-}
-
-struct TokensBuffer<'ctx> {
-    host: HostMem<'ctx>,
-    dev: DevMem<'ctx>,
-}
-
-impl<'ctx> TokensBuffer<'ctx> {
-    pub fn new(ctx: &'ctx CurrentCtx, max_tok: usize) -> Self {
-        Self {
-            host: ctx.malloc_host::<utok>(max_tok),
-            dev: ctx.malloc::<utok>(max_tok),
-        }
-    }
-}
-
-impl TokensBuffer<'_> {
-    pub fn set(&mut self, tokens: &[utok], padding: usize, stream: &Stream) -> &mut [DevByte] {
-        let len = size_of_val(tokens);
-        let padding = padding * size_of::<utok>();
-
-        let (host, tail) = self.host[..padding].split_at_mut(len);
-        host.copy_from_slice(unsafe { std::slice::from_raw_parts(tokens.as_ptr().cast(), len) });
-        tail.fill(0);
-
-        let src = &self.host[..padding];
-        let dev = &mut self.dev[..padding];
-        stream.memcpy_h2d(dev, src);
-        dev
-    }
 }

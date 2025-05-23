@@ -100,22 +100,20 @@ impl<'ctx> ModelGroup<'ctx> {
         ans.get()
     }
 
-    pub fn launch(
+    pub fn load_inputs<T>(
         &mut self,
-        toks: &[DevByte],
-        reqs: &[Req<Arc<[Mutex<KVCache>]>>],
-        handle: &mut Handle,
-        stream: &Stream<'ctx>,
-    ) -> Tensor<*const VirByte, 2> {
+        toks: &[utok],
+        reqs: &[Req<T>],
+        loading: &Stream,
+    ) -> (NonZeroUsize, &mut [DevByte]) {
+        let key = NonZeroUsize::new(self.padding(toks.len())).unwrap();
         let Self {
             models,
             mapped,
-            attn,
             pages,
             ..
         } = self;
 
-        let key = NonZeroUsize::new(toks.len() / size_of::<utok>()).unwrap();
         let map = match mapped {
             Some(mapped) => {
                 if *mapped != key {
@@ -132,6 +130,29 @@ impl<'ctx> ModelGroup<'ctx> {
             *mapped = Some(key);
             model.map(pages)
         }
+
+        let tok = self
+            .models
+            .get_mut(&key)
+            .unwrap()
+            .load_inputs(toks, reqs, loading);
+        (key, tok)
+    }
+
+    pub fn launch(
+        &mut self,
+        key: NonZeroUsize,
+        reqs: &[Req<Arc<[Mutex<KVCache>]>>],
+        handle: &mut Handle,
+        stream: &Stream<'ctx>,
+    ) -> Tensor<*const VirByte, 2> {
+        let Self {
+            models,
+            attn,
+            pages,
+            ..
+        } = self;
+
         let mut reqs = reqs
             .iter()
             .map(|req| Req {
@@ -151,7 +172,11 @@ impl<'ctx> ModelGroup<'ctx> {
                 }
             })
             .collect::<Vec<_>>();
-        model.launch(attn, handle, toks, &reqs, stream)
+
+        models
+            .get_mut(&key)
+            .unwrap()
+            .launch(attn, handle, &reqs, stream)
     }
 }
 

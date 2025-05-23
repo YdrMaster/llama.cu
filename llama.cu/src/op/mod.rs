@@ -18,7 +18,7 @@ use operators::cuda::{Stream, VirByte};
 #[cfg(nccl)]
 pub use all_reduce::AllReduce;
 pub use embedding::Embedding;
-pub use fast_embedding::fast_embedding;
+pub use fast_embedding::FastEmbedding;
 pub use linear::Linear;
 pub use rms_norm::RmsNorm;
 pub use rope::Rope;
