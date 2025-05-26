@@ -12,10 +12,7 @@ use operators::{
     attention_kv_cached::cuda::Operator as Attn,
     cuda::{DevByte, HostMem, Stream, VirByte, VirMem},
 };
-use std::{
-    sync::{Arc, Barrier},
-    time::Instant,
-};
+use std::time::Instant;
 use tokeneer::utok;
 
 pub(super) struct ModelExec<'ctx> {
@@ -25,7 +22,6 @@ pub(super) struct ModelExec<'ctx> {
     workspace: VirMem,
     inputs: Box<[Tensor<*const VirByte, 2>]>,
     outputs: Box<[Tensor<*const VirByte, 2>]>,
-    barrier: Option<Arc<Barrier>>,
 }
 
 impl<'ctx> ModelExec<'ctx> {
@@ -34,7 +30,6 @@ impl<'ctx> ModelExec<'ctx> {
         n_tok: usize,
         handle: &mut Handle<'ctx>,
         pages: &mut MemPages,
-        barrier: Option<Arc<Barrier>>,
         use_cuda_graph: bool,
     ) -> Self {
         let graph = graph.lower(&[("n_tok", n_tok)].into(), |t| t);
@@ -67,9 +62,6 @@ impl<'ctx> ModelExec<'ctx> {
 
         // 构造 cuda graph
         let time = Instant::now();
-        if let Some(barrier) = &barrier {
-            barrier.wait();
-        }
         let execs = handle.build_steps(exec, use_cuda_graph);
         trace!(
             "model compiled @{} in {:.2?}, seq len = {n_tok}, workspace = {}",
@@ -88,7 +80,6 @@ impl<'ctx> ModelExec<'ctx> {
             workspace,
             inputs,
             outputs,
-            barrier,
         }
     }
 }
@@ -104,19 +95,23 @@ impl ModelExec<'_> {
         pages.unmap(&mut self.workspace, ..)
     }
 
-    pub fn load_inputs<T>(
-        &mut self,
-        toks: &[utok],
-        reqs: &[Req<T>],
-        loading: &Stream,
-    ) -> &mut [DevByte] {
-        // load tokens
-        let len = size_of_val(toks);
-        unsafe {
-            std::ptr::copy_nonoverlapping(toks.as_ptr().cast(), self.buf_tok.as_mut_ptr(), len)
-        };
-        loading.memcpy_h2d(as_mapped(&self.inputs[0]), &self.buf_tok);
-        // load pos
+    pub fn load_toks_host(&mut self, toks: &[utok], loading: &Stream) -> &mut [DevByte] {
+        {
+            let len = size_of_val(toks);
+            let src = toks.as_ptr();
+            let dst = self.buf_tok.as_mut_ptr();
+            unsafe { std::ptr::copy_nonoverlapping(src.cast(), dst, len) }
+        }
+        let ans = as_mapped(&self.inputs[0]);
+        loading.memcpy_h2d(ans, &self.buf_tok);
+        ans
+    }
+
+    pub fn toks_buf(&mut self) -> &mut [DevByte] {
+        as_mapped(&self.inputs[0])
+    }
+
+    pub fn load_pos<T>(&mut self, reqs: &[Req<T>], loading: &Stream) {
         let ([], pos, []) = (unsafe { self.buf_pos.align_to_mut::<upos>() }) else {
             unreachable!()
         };
@@ -125,20 +120,16 @@ impl ModelExec<'_> {
             .enumerate()
             .for_each(|(i, val)| pos[i] = val as _);
         loading.memcpy_h2d(as_mapped(&self.inputs[1]), pos);
-        as_mapped(&self.inputs[0])
     }
 
-    pub fn launch<'ctx>(
+    pub fn launch(
         &mut self,
         attn: &Attn,
         handle: &mut Handle,
         reqs: &[Req<Tensor<*const VirByte, 2>>],
-        stream: &Stream<'ctx>,
+        stream: &Stream,
     ) -> Tensor<*const VirByte, 2> {
         // 执行
-        if let Some(barrier) = &self.barrier {
-            barrier.wait();
-        }
         for exec in &self.execs {
             match exec {
                 Step::Graph(graph, stub) => {

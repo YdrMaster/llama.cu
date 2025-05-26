@@ -6,8 +6,8 @@
         find_cuda_root().is_some(),
         "cuda not found, check $CUDA_ROOT env var"
     );
-    let _nccl = Cfg::new("nccl");
+    let nccl = Cfg::new("nccl");
     if find_nccl_root().is_some() {
-        // nccl.define()
+        nccl.define()
     }
 }

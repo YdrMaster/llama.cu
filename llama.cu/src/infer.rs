@@ -1,13 +1,11 @@
 ﻿use crate::{
     Task,
-    exec::{Command, DistKVCache, Output, Request, Session, SessionId},
-    handle::Handle,
+    exec::{Command, DistKVCache, Output, Request, Session, SessionId, engine},
     model::{GGufModel, Message, map_files},
     utils::meta,
 };
 use ggus::GGufMetaMapExt;
 use log::{info, warn};
-use nn::{Distribution, LLaMA, Tensor};
 use operators::cuda::{self, ContextSpore, Device};
 use std::{
     collections::BTreeMap,
@@ -17,9 +15,6 @@ use std::{
     time::{Duration, Instant},
 };
 use tokeneer::{Bpe, utok};
-
-#[cfg(nccl)]
-use operators::nccl::{Communicator, CommunicatorGroup};
 
 pub fn infer(
     model: impl AsRef<Path>,
@@ -34,111 +29,25 @@ pub fn infer(
     let mut gguf = GGufModel::read(maps.iter().map(|x| &**x));
     gguf.insert_sin_cos();
     let llama = gguf.llama();
-    info!("start inference @gpu{gpus:?}");
-
+    // 创建调度通道
+    let (outputs, receiver) = mpsc::channel();
+    let (sender, commands) = mpsc::channel();
+    // 启动推理引擎
     assert!(cuda::init().is_ok());
-
     std::thread::scope(|s| {
-        let devices = gpus.iter().cloned().map(Device::new).collect();
-        let (outputs, receiver) = mpsc::channel();
-
-        match gpus {
-            &[] => unreachable!(),
-            &[index] => {
-                let (sender, commands) = mpsc::channel();
-
-                let dev = Device::new(index);
-                let _worker =
-                    s.spawn(move || launch_mono(llama, dev, commands, outputs, use_cuda_grpah));
-
-                service(
-                    requests, session, devices, sender, receiver, &gguf, max_steps,
-                )
-            }
-            #[cfg(not(nccl))]
-            [..] => panic!("nccl not found"),
-            #[cfg(nccl)]
-            gpus => {
-                let comms = CommunicatorGroup::new(gpus);
-                let barrier = Arc::new(Barrier::new(comms.len()));
-
-                let _workers = comms
-                    .into_vec()
-                    .into_iter()
-                    .map(|comm| {
-                        let rank = comm.rank();
-                        let total = comm.count();
-                        let dist = Distribution::new(rank, 1, total);
-
-                        let (sender, commands) = mpsc::channel();
-                        senders.push(sender);
-
-                        let llama = llama.clone();
-                        let barrier = barrier.clone();
-                        let outputs = outputs.clone();
-                        s.spawn(move || {
-                            launch_partial(
-                                llama,
-                                comm,
-                                dist,
-                                barrier,
-                                commands,
-                                outputs,
-                                use_cuda_grpah,
-                            )
-                        })
-                    })
-                    .collect::<Box<_>>();
-            }
-        }
+        let _worker = s.spawn(move || engine(llama, gpus, commands, outputs, use_cuda_grpah));
+        info!("start inference @gpu{gpus:?}");
+        let devices = gpus.iter().cloned().map(Device::new).collect::<Vec<_>>();
+        service(
+            requests, session, &devices, sender, receiver, &gguf, max_steps,
+        )
     })
-}
-
-fn launch_mono(
-    llama: LLaMA<Tensor<&[u8], 2>>,
-    dev: Device,
-    commands: Receiver<Command>,
-    outputs: Sender<Output>,
-    use_cuda_grpah: bool,
-) {
-    crate::exec::engine(
-        llama,
-        dev,
-        Distribution::MONO,
-        None,
-        commands,
-        outputs,
-        use_cuda_grpah,
-        |ctx| Handle::new(ctx),
-    )
-}
-
-#[cfg(nccl)]
-fn launch_partial(
-    llama: LLaMA<Tensor<&[u8], 2>>,
-    comm: Communicator,
-    dist: Distribution,
-    barrier: Arc<Barrier>,
-    commands: Receiver<Command>,
-    outputs: Sender<Output>,
-    use_cuda_grpah: bool,
-) {
-    crate::exec::engine(
-        llama,
-        comm.device(),
-        dist,
-        Some(barrier),
-        commands,
-        outputs,
-        use_cuda_grpah,
-        |ctx| Handle::with_comm(ctx, comm),
-    )
 }
 
 fn service(
     requests: Receiver<Task>,
     session: Sender<Receiver<String>>,
-    devices: Box<[Device]>,
+    devices: &[Device],
     sender: Sender<Command>,
     receiver: Receiver<Output>,
     gguf: &GGufModel,

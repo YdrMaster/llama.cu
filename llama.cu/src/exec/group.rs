@@ -11,7 +11,7 @@ use operators::{
 };
 use std::{
     collections::BTreeMap,
-    num::NonZeroUsize,
+    num::{NonZero, NonZeroUsize},
     sync::{Arc, Barrier, Mutex},
     time::Instant,
 };
@@ -40,7 +40,7 @@ impl<'ctx> ModelGroup<'ctx> {
         attn: Attn,
         n_toks: impl IntoIterator<Item = usize>,
         handle: &mut Handle<'ctx>,
-        barrier: Option<Arc<Barrier>>,
+        barrier: Option<&Barrier>,
         use_cuda_graph: bool,
     ) -> Self {
         let NNGraph(Graph { topo, nodes, edges }) = builder()
@@ -67,16 +67,12 @@ impl<'ctx> ModelGroup<'ctx> {
         let models = n_toks
             .into_iter()
             .map(|n_tok| {
+                if let Some(b) = barrier {
+                    b.wait();
+                }
                 (
                     NonZeroUsize::new(n_tok).unwrap(),
-                    ModelExec::new(
-                        graph.clone(),
-                        n_tok,
-                        handle,
-                        &mut pages,
-                        barrier.clone(),
-                        use_cuda_graph,
-                    ),
+                    ModelExec::new(graph.clone(), n_tok, handle, &mut pages, use_cuda_graph),
                 )
             })
             .collect::<BTreeMap<_, _>>();
@@ -100,13 +96,7 @@ impl<'ctx> ModelGroup<'ctx> {
         ans.get()
     }
 
-    pub fn load_inputs<T>(
-        &mut self,
-        toks: &[utok],
-        reqs: &[Req<T>],
-        loading: &Stream,
-    ) -> (NonZeroUsize, &mut [DevByte]) {
-        let key = NonZeroUsize::new(self.padding(toks.len())).unwrap();
+    pub fn map_memory(&mut self, key: NonZero<usize>) {
         let Self {
             models,
             mapped,
@@ -130,13 +120,21 @@ impl<'ctx> ModelGroup<'ctx> {
             *mapped = Some(key);
             model.map(pages)
         }
+    }
 
+    pub fn load_toks(&mut self, toks: &[utok], loading: &Stream) -> (NonZeroUsize, &mut [DevByte]) {
+        let key = NonZeroUsize::new(self.padding(toks.len())).unwrap();
+        self.map_memory(key);
         let tok = self
             .models
             .get_mut(&key)
             .unwrap()
-            .load_inputs(toks, reqs, loading);
+            .load_toks_host(toks, loading);
         (key, tok)
+    }
+
+    pub fn load_toks_buf(&mut self, key: NonZeroUsize) -> &mut [DevByte] {
+        self.models.get_mut(&key).unwrap().toks_buf()
     }
 
     pub fn launch(
@@ -173,10 +171,9 @@ impl<'ctx> ModelGroup<'ctx> {
             })
             .collect::<Vec<_>>();
 
-        models
-            .get_mut(&key)
-            .unwrap()
-            .launch(attn, handle, &reqs, stream)
+        let model = models.get_mut(&key).unwrap();
+        model.load_pos(&reqs, stream);
+        model.launch(attn, handle, &reqs, stream)
     }
 }
 

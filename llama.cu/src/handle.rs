@@ -46,6 +46,13 @@ impl<'ctx> Handle<'ctx> {
     }
 
     pub fn rank(&self) -> usize {
-        if cfg!(nccl) { todo!() } else { 0 }
+        #[cfg(nccl)]
+        {
+            self.comm.as_ref().map_or(0, Communicator::rank)
+        }
+        #[cfg(not(nccl))]
+        {
+            0
+        }
     }
 }
