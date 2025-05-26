@@ -224,13 +224,11 @@ impl Worker<'_> {
                 // 快速启动路径
                 fast_embd.launch(tok, &pre_kv_pairs, fast_map, &mut handle, &loading, &stream);
                 // 通知协处理单元
-                #[cfg(nccl)]
-                if let Some(comm) = &handle.comm {
-                    for sender in senders {
-                        sender.send((key.clone(), reqs.clone())).unwrap()
-                    }
-                    comm.broadcast(tok, None, 0, &stream)
+                for sender in senders {
+                    sender.send((key.clone(), reqs.clone())).unwrap()
                 }
+                #[cfg(nccl)]
+                models.share_toks(key, &mut handle, &stream);
                 // 推理
                 let x = models.launch(key, &reqs, &mut handle, &stream);
                 // 输出
@@ -285,14 +283,8 @@ impl Worker<'_> {
 
             let stream = ctx.stream();
             for (key, reqs) in receiver {
-                models.map_memory(key);
-                handle.comm.as_ref().unwrap().broadcast(
-                    models.load_toks_buf(key),
-                    None,
-                    0,
-                    &stream,
-                );
-                let _ = models.launch(key, &reqs, &mut handle, &stream);
+                models.share_toks(key, &mut handle, &stream);
+                models.launch(key, &reqs, &mut handle, &stream);
             }
         })
     }

@@ -43,6 +43,7 @@ impl<'ctx> ModelGroup<'ctx> {
         barrier: Option<&Barrier>,
         use_cuda_graph: bool,
     ) -> Self {
+        // 构建计算图
         let NNGraph(Graph { topo, nodes, edges }) = builder()
             .build(
                 llama.tensor_parallel(dist),
@@ -52,17 +53,13 @@ impl<'ctx> ModelGroup<'ctx> {
                 ],
             )
             .unwrap();
-
-        // 权重加载
+        // 加载权重
         let dev = handle.ctx.dev();
         let mut pages = MemPages::new(dev);
         let (_weight, edges) = pages.load_weight(&dev, edges);
-
-        // 推理
+        // 构建 cuda graph
         let graph = NNGraph(Graph { topo, nodes, edges });
-
-        let idev = dev.index();
-        debug!("compiling model group @{idev}");
+        debug!("compiling model group @{}", dev.index());
         let time = Instant::now();
         let models = n_toks
             .into_iter()
@@ -70,15 +67,15 @@ impl<'ctx> ModelGroup<'ctx> {
                 if let Some(b) = barrier {
                     b.wait();
                 }
-                (
-                    NonZeroUsize::new(n_tok).unwrap(),
-                    ModelExec::new(graph.clone(), n_tok, handle, &mut pages, use_cuda_graph),
-                )
+                let key = NonZeroUsize::new(n_tok).unwrap();
+                let exec = ModelExec::new(graph.clone(), n_tok, handle, &mut pages, use_cuda_graph);
+                (key, exec)
             })
             .collect::<BTreeMap<_, _>>();
         debug!(
-            "group ({} models) compiled @{idev} in {:.02?}",
+            "group ({} models) compiled @{} in {:.02?}",
             models.len(),
+            dev.index(),
             time.elapsed(),
         );
         Self {
@@ -90,41 +87,11 @@ impl<'ctx> ModelGroup<'ctx> {
         }
     }
 
-    pub fn padding(&self, len: usize) -> usize {
-        let len = NonZeroUsize::new(len).unwrap();
-        let (ans, _) = self.models.range(len..).next().unwrap();
-        ans.get()
-    }
-
-    pub fn map_memory(&mut self, key: NonZero<usize>) {
-        let Self {
-            models,
-            mapped,
-            pages,
-            ..
-        } = self;
-
-        let map = match mapped {
-            Some(mapped) => {
-                if *mapped != key {
-                    models.get_mut(mapped).unwrap().unmap(pages);
-                    true
-                } else {
-                    false
-                }
-            }
-            None => true,
-        };
-        let model = models.get_mut(&key).unwrap();
-        if map {
-            *mapped = Some(key);
-            model.map(pages)
-        }
-    }
-
     pub fn load_toks(&mut self, toks: &[utok], loading: &Stream) -> (NonZeroUsize, &mut [DevByte]) {
-        let key = NonZeroUsize::new(self.padding(toks.len())).unwrap();
-        self.map_memory(key);
+        let len = NonZeroUsize::new(toks.len()).unwrap();
+        let (ans, _) = self.models.range(len..).next().unwrap();
+        let key = NonZeroUsize::new(ans.get()).unwrap();
+        self.map_exec(key);
         let tok = self
             .models
             .get_mut(&key)
@@ -133,8 +100,13 @@ impl<'ctx> ModelGroup<'ctx> {
         (key, tok)
     }
 
-    pub fn load_toks_buf(&mut self, key: NonZeroUsize) -> &mut [DevByte] {
-        self.models.get_mut(&key).unwrap().toks_buf()
+    #[cfg(nccl)]
+    pub fn share_toks(&mut self, key: NonZeroUsize, handle: &mut Handle, stream: &Stream<'ctx>) {
+        self.map_exec(key);
+        if let Some(comm) = &handle.comm {
+            let toks = self.models.get_mut(&key).unwrap().toks_buf();
+            comm.broadcast(toks, None, 0, &stream)
+        }
     }
 
     pub fn launch(
@@ -174,6 +146,28 @@ impl<'ctx> ModelGroup<'ctx> {
         let model = models.get_mut(&key).unwrap();
         model.load_pos(&reqs, stream);
         model.launch(attn, handle, &reqs, stream)
+    }
+
+    /// 为组中的指定执行模型映射物理页
+    fn map_exec(&mut self, key: NonZero<usize>) {
+        let Self {
+            models,
+            mapped,
+            pages,
+            ..
+        } = self;
+        // 检查当前映射的模型
+        if let Some(mapped) = mapped {
+            if *mapped == key {
+                return;
+            }
+            // 当前映射的模型不是要映射的模型，解映射
+            models.get_mut(mapped).unwrap().unmap(pages)
+        }
+        // 建立映射
+        models.get_mut(&key).unwrap().map(pages);
+        // 更新记录
+        *mapped = Some(key)
     }
 }
 
