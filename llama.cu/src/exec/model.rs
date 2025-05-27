@@ -109,6 +109,7 @@ impl ModelExec<'_> {
         ans
     }
 
+    #[cfg(nccl)]
     pub fn toks_buf(&mut self) -> &mut [DevByte] {
         as_mapped(&self.inputs[0])
     }

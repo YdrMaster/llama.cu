@@ -12,7 +12,6 @@ use operators::{
     Operator,
     attention_kv_cached::cuda::Operator as Attn,
     cuda::{ContextResource, CurrentCtx, Device, Gpu, HostMem},
-    nccl::CommunicatorGroup,
     random_sample::{KVPair, cuda::Operator as Sample},
 };
 use std::{
@@ -27,7 +26,7 @@ use std::{
 use tokeneer::utok;
 
 #[cfg(nccl)]
-use operators::nccl::Communicator;
+use operators::nccl::{Communicator, CommunicatorGroup};
 
 pub(super) struct SessionStub {
     pub session: Session,
@@ -62,7 +61,7 @@ impl Request {
 const NTOKS: &[usize] = &[1, 8, 32, 128, 512];
 
 pub(crate) fn engine(
-    mut llama: LLaMA<Tensor<&[u8], 2>>,
+    llama: LLaMA<Tensor<&[u8], 2>>,
     gpus: &[c_int],
     commands: Receiver<Command>,
     outputs: Sender<Output>,
@@ -80,6 +79,7 @@ pub(crate) fn engine(
         let mut comms = CommunicatorGroup::new(gpus).into_vec().into_iter();
         let first = comms.next().unwrap();
 
+        let mut llama = llama;
         let output_head = llama.output_head.take().unwrap();
         let worker = Worker {
             dev: first.device(),
@@ -152,6 +152,7 @@ struct Worker<'a> {
 
 type TaskBox = Arc<RwLock<Option<Task>>>;
 
+#[cfg_attr(not(nccl), allow(dead_code))]
 struct Task {
     key: NonZeroUsize,
     reqs: Vec<Req<Arc<[Mutex<KVCache>]>>>,
