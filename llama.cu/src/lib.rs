@@ -157,19 +157,19 @@ impl Service {
                 received
                     .sessions
                     .extend(no_decode.into_iter().map(|s| (s, ReturnReason::NoDecode)));
-                received
-                    .outputs
-                    .extend(outputs.into_iter().map(|(id, mut tokens)| {
-                        if let Some((len, _)) = tokens
-                            .iter()
-                            .enumerate()
-                            .find(|(_, t)| **t == components.eos)
-                        {
-                            tokens.truncate(len)
-                        }
-                        let piece = components.tokenizer.decode(&tokens).into_bytes();
-                        (id, (tokens, piece))
-                    }))
+                for (id, mut tokens) in outputs {
+                    if let Some((len, _)) = tokens
+                        .iter()
+                        .enumerate()
+                        .find(|(_, t)| **t == components.eos)
+                    {
+                        tokens.truncate(len)
+                    }
+                    let piece = components.tokenizer.decode(&tokens).into_bytes();
+                    let (tokens_, piece_) = received.outputs.entry(id).or_default();
+                    tokens_.extend(tokens);
+                    piece_.extend(piece);
+                }
             }
             Output::Ready => unreachable!(),
         }
