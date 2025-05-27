@@ -10,7 +10,7 @@ use crate::{memory::MemPages, utils::cast_slice_mut};
 use kv_cache::KVCache;
 use nn::Tensor;
 use operators::{
-    cuda::{ContextSpore, DevMemSpore, Device, EventSpore, Stream},
+    cuda::{ContextSpore, CurrentCtx, DevMemSpore, Device, EventSpore, Stream},
     random_sample::{KVPair, SampleArgs},
 };
 use std::{
@@ -22,7 +22,7 @@ use tokeneer::utok;
 pub(crate) use engine::engine;
 
 pub(crate) enum Command {
-    Notify,
+    ShutDown,
     Insert(Request),
     Remove(SessionId),
 }
@@ -37,6 +37,14 @@ pub(crate) enum Output {
         event: EventSpore,
         no_decode: Box<[Session]>,
     },
+}
+
+impl Output {
+    pub(crate) fn drop_on(self, ctx: &CurrentCtx) {
+        if let Self::Complete { kv_pair, event, .. } = self {
+            drop((kv_pair.sprout(ctx), event.sprout(ctx)))
+        }
+    }
 }
 
 pub(crate) struct Request {

@@ -1,12 +1,11 @@
 ﻿use super::{
     Command, Output, Request, Session,
-    engine_manager::{CommandReceiveError, EngineManager, Round},
+    engine_manager::{EngineManager, Round},
     group::{ModelGroup, Req},
     kv_cache::KVCache,
     output_head::OutputHead,
 };
 use crate::{handle::Handle, op::FastEmbedding};
-use log::warn;
 use nn::{Distribution, LLaMA, Tensor};
 use operators::{
     Operator,
@@ -200,16 +199,7 @@ impl Worker<'_> {
             let loading = ctx.stream();
             let stream = ctx.stream();
             if outputs.send(Output::Ready).is_ok() {
-                loop {
-                    // 接收指令
-                    match manager.receive(&commands, &outputs) {
-                        Ok(()) => {}
-                        Err(CommandReceiveError::SendError) => break,
-                        Err(CommandReceiveError::ReceiveError) => {
-                            warn!("command sender dropped");
-                            break;
-                        }
-                    }
+                while manager.receive(&commands, &outputs).is_ok() {
                     // 组织请求
                     let Round {
                         overflow,

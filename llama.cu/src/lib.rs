@@ -23,7 +23,7 @@ use std::{
     path::Path,
     sync::{
         Arc, OnceLock,
-        mpsc::{self, Receiver, Sender},
+        mpsc::{self, Receiver, Sender, TryRecvError},
     },
 };
 use tokeneer::{Bpe, Tokeneer, utok};
@@ -47,6 +47,7 @@ pub enum ReturnReason {
     NoDecode,
 }
 
+#[derive(Default)]
 pub struct Received {
     pub sessions: Vec<(Session, ReturnReason)>,
     pub outputs: BTreeMap<SessionId, (Vec<utok>, Vec<u8>)>,
@@ -111,24 +112,38 @@ impl Service {
     }
 
     pub fn recv(&self) -> Received {
+        let mut received = Received::default();
         match self.handle.as_ref().unwrap().0.recv() {
-            Ok(Output::Overflow(sessions)) => Received {
-                sessions: sessions
-                    .into_iter()
-                    .map(|s| (s, ReturnReason::Overflow))
-                    .collect(),
-                outputs: Default::default(),
-            },
-            Ok(Output::Removed(session)) => Received {
-                sessions: vec![(session, ReturnReason::Finish)],
-                outputs: Default::default(),
-            },
-            Ok(Output::Complete {
+            Ok(output) => self.handle_output(output, &mut received),
+            Err(_) => unreachable!(),
+        }
+        received
+    }
+
+    pub fn try_recv(&self) -> Received {
+        let mut received = Received::default();
+        loop {
+            match self.handle.as_ref().unwrap().0.try_recv() {
+                Ok(output) => self.handle_output(output, &mut received),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => unreachable!(),
+            }
+        }
+        received
+    }
+
+    fn handle_output(&self, output: Output, received: &mut Received) {
+        match output {
+            Output::Overflow(sessions) => received
+                .sessions
+                .extend(sessions.into_iter().map(|s| (s, ReturnReason::Overflow))),
+            Output::Removed(session) => received.sessions.push((session, ReturnReason::Finish)),
+            Output::Complete {
                 output,
                 kv_pair,
                 event,
                 no_decode,
-            }) => {
+            } => {
                 let device = self.terminal.cache_parts[0].0;
                 let mut outputs = device
                     .retain_primary()
@@ -139,37 +154,42 @@ impl Service {
                         self.terminal.sender.send(Command::Remove(id)).unwrap()
                     }
                 }
-                Received {
-                    sessions: no_decode
-                        .into_iter()
-                        .map(|s| (s, ReturnReason::NoDecode))
-                        .collect(),
-                    outputs: outputs
-                        .into_iter()
-                        .map(|(id, mut tokens)| {
-                            if let Some((len, _)) = tokens
-                                .iter()
-                                .enumerate()
-                                .find(|(_, t)| **t == components.eos)
-                            {
-                                tokens.truncate(len)
-                            }
-                            let piece = components.tokenizer.decode(&tokens).into_bytes();
-                            (id, (tokens, piece))
-                        })
-                        .collect(),
-                }
+                received
+                    .sessions
+                    .extend(no_decode.into_iter().map(|s| (s, ReturnReason::NoDecode)));
+                received
+                    .outputs
+                    .extend(outputs.into_iter().map(|(id, mut tokens)| {
+                        if let Some((len, _)) = tokens
+                            .iter()
+                            .enumerate()
+                            .find(|(_, t)| **t == components.eos)
+                        {
+                            tokens.truncate(len)
+                        }
+                        let piece = components.tokenizer.decode(&tokens).into_bytes();
+                        (id, (tokens, piece))
+                    }))
             }
-            Ok(Output::Ready) | Err(_) => unreachable!(),
+            Output::Ready => unreachable!(),
         }
     }
 }
 
 impl Drop for Service {
     fn drop(&mut self) {
-        let (_, handle) = self.handle.take().unwrap();
-        let _ = self.terminal.sender.send(Command::Notify);
-        handle.join().unwrap()
+        let (receiver, handle) = self.handle.take().unwrap();
+        let Terminal {
+            sender,
+            cache_parts,
+            ..
+        } = &self.terminal;
+        sender.send(Command::ShutDown).unwrap();
+        handle.join().unwrap();
+        cache_parts[0]
+            .0
+            .retain_primary()
+            .apply(|ctx| receiver.into_iter().for_each(|output| output.drop_on(ctx)))
     }
 }
 
@@ -178,7 +198,7 @@ impl Terminal {
         DistKVCache::new(&self.components.wait().cache_template, &self.cache_parts)
     }
 
-    pub fn start(&self, session: Session, mut prompt: String, use_template: bool) {
+    pub fn start(&self, session: Session, mut prompt: String, use_template: bool) -> bool {
         let ModelComponents {
             tokenizer,
             chat_template,
@@ -205,6 +225,10 @@ impl Terminal {
                 prompt: tokenizer.encode(&prompt).into(),
                 out: 1,
             }))
-            .unwrap()
+            .is_ok()
+    }
+
+    pub fn stop(&self, id: SessionId) -> bool {
+        self.sender.send(Command::Remove(id)).is_ok()
     }
 }
