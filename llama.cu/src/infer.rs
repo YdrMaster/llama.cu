@@ -135,8 +135,6 @@ fn service(
         }
     }
 
-    println!("break");
-
     drop(sender);
     devices[0].retain_primary().apply(|ctx| {
         for output in receiver {

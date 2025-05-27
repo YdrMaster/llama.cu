@@ -22,8 +22,8 @@ use std::{
     iter::zip,
     num::NonZeroUsize,
     sync::{
-        Arc, Barrier, Mutex,
-        mpsc::{self, Receiver, Sender},
+        Arc, Barrier, Mutex, RwLock,
+        mpsc::{Receiver, Sender},
     },
 };
 use tokeneer::utok;
@@ -92,11 +92,11 @@ pub(crate) fn engine(
             },
             ntoks: NTOKS,
             barrier: Some(Arc::new(Barrier::new(gpus.len()))),
+            task_box: Default::default(),
             use_cuda_graph,
         };
 
         std::thread::scope(|s| {
-            let mut senders = Vec::new();
             let _threads = comms
                 .into_iter()
                 .map(|comm| {
@@ -107,13 +107,11 @@ pub(crate) fn engine(
                         ..worker.clone()
                     };
                     let llama = llama.clone();
-                    let (sender, receiver) = mpsc::channel();
-                    senders.push(sender);
-                    s.spawn(move || worker.work(llama, comm, receiver))
+                    s.spawn(move || worker.work(llama, comm))
                 })
                 .collect::<Vec<_>>();
 
-            worker.lead(llama, output_head, commands, outputs, &senders, |ctx| {
+            worker.lead(llama, output_head, commands, outputs, |ctx| {
                 Handle::with_comm(ctx, first)
             })
         })
@@ -137,9 +135,10 @@ fn mono(
         },
         ntoks: NTOKS,
         barrier: None,
+        task_box: Default::default(),
         use_cuda_graph,
     }
-    .lead(llama, output_head, commands, outputs, &[], |ctx| {
+    .lead(llama, output_head, commands, outputs, |ctx| {
         Handle::new(ctx)
     })
 }
@@ -150,7 +149,15 @@ struct Worker<'a> {
     dist: Distribution,
     ntoks: &'a [usize],
     barrier: Option<Arc<Barrier>>,
+    task_box: TaskBox,
     use_cuda_graph: bool,
+}
+
+type TaskBox = Arc<RwLock<Option<Task>>>;
+
+struct Task {
+    key: NonZeroUsize,
+    reqs: Vec<Req<Arc<[Mutex<KVCache>]>>>,
 }
 
 impl Worker<'_> {
@@ -160,7 +167,6 @@ impl Worker<'_> {
         output_head: nn::OutputHead<Tensor<&[u8], 2>>,
         commands: Receiver<Command>,
         outputs: Sender<Output>,
-        senders: &[Sender<(NonZeroUsize, Vec<Req<Arc<[Mutex<KVCache>]>>>)>],
         handle: impl FnOnce(&CurrentCtx) -> Handle,
     ) {
         let Self {
@@ -168,6 +174,7 @@ impl Worker<'_> {
             dist,
             ntoks,
             barrier,
+            task_box,
             use_cuda_graph,
         } = self;
 
@@ -198,7 +205,7 @@ impl Worker<'_> {
                 // 接收指令
                 match manager.receive(&commands, &outputs) {
                     Ok(()) => {}
-                    Err(CommandReceiveError::SendError) => return,
+                    Err(CommandReceiveError::SendError) => break,
                     Err(CommandReceiveError::ReceiveError) => {
                         warn!("command sender dropped");
                         break;
@@ -216,7 +223,7 @@ impl Worker<'_> {
                 } = manager.prepare();
                 if !overflow.is_empty() && outputs.send(Output::Overflow(overflow.into())).is_err()
                 {
-                    return;
+                    break;
                 }
                 let out_idx = out_idx(&reqs, output.iter().map(|(_, len)| *len), ctx);
                 // 加载输入
@@ -224,11 +231,15 @@ impl Worker<'_> {
                 // 快速启动路径
                 fast_embd.launch(tok, &pre_kv_pairs, fast_map, &mut handle, &loading, &stream);
                 // 通知协处理单元
-                for sender in senders {
-                    sender.send((key.clone(), reqs.clone())).unwrap()
-                }
                 #[cfg(nccl)]
-                models.share_toks(key, &mut handle, &stream);
+                if let Some(barrier) = &barrier {
+                    *task_box.write().unwrap() = Some(Task {
+                        key,
+                        reqs: reqs.clone(),
+                    });
+                    barrier.wait();
+                    models.share_toks(key, &mut handle, &stream);
+                }
                 // 推理
                 let x = models.launch(key, &reqs, &mut handle, &stream);
                 // 输出
@@ -241,34 +252,37 @@ impl Worker<'_> {
                     no_decode: no_decode.into(),
                 };
                 if outputs.send(output).is_err() {
-                    return;
+                    break;
                 }
             }
+            // 通知协处理单元退出
+            if let Some(barrier) = &barrier {
+                let _ = task_box.write().unwrap().take();
+                barrier.wait();
+            }
+            // 送回存储的会话信息
             for stub in manager.into_stubs() {
                 if outputs.send(Output::Removed(stub.session)).is_err() {
-                    return;
+                    break;
                 }
             }
         })
     }
 
     #[cfg(nccl)]
-    fn work(
-        self,
-        llama: LLaMA<Tensor<&[u8], 2>>,
-        comm: Communicator,
-        receiver: Receiver<(NonZeroUsize, Vec<Req<Arc<[Mutex<KVCache>]>>>)>,
-    ) {
+    fn work(self, llama: LLaMA<Tensor<&[u8], 2>>, comm: Communicator) {
         let Self {
             dev,
             dist,
             ntoks,
             barrier,
+            task_box,
             use_cuda_graph,
         } = self;
 
         let gpu = Gpu::new(dev.retain_primary(), Default::default());
         let attn = Attn::new(&gpu);
+        let barrier = barrier.unwrap();
         gpu.apply(|ctx| {
             let mut handle = Handle::with_comm(ctx, comm);
             let mut models = ModelGroup::new(
@@ -277,14 +291,20 @@ impl Worker<'_> {
                 attn,
                 ntoks.iter().copied(),
                 &mut handle,
-                barrier.as_deref(),
+                Some(&barrier),
                 use_cuda_graph,
             );
 
             let stream = ctx.stream();
-            for (key, reqs) in receiver {
-                models.share_toks(key, &mut handle, &stream);
-                models.launch(key, &reqs, &mut handle, &stream);
+            loop {
+                barrier.wait();
+                match &*task_box.read().unwrap() {
+                    Some(Task { key, reqs }) => {
+                        models.share_toks(*key, &mut handle, &stream);
+                        models.launch(*key, reqs, &mut handle, &stream);
+                    }
+                    None => break,
+                }
             }
         })
     }
