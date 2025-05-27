@@ -2,8 +2,7 @@
 mod gguf;
 
 use crate::utils::{Blob, Data, meta};
-use ggus::GGufFileName;
-use ggus::GGufMetaMapExt;
+use ggus::{GGufFileName, GGufMetaMapExt};
 use memmap2::Mmap;
 use nn::{
     Activation, Attention, Embedding, LLaMA, Linear, Mlp, NormType, Normalization, OutputHead,
@@ -11,7 +10,7 @@ use nn::{
 };
 use std::{fmt::Debug, fs::File, path::Path};
 
-pub(crate) use chat_template::Message;
+pub(crate) use chat_template::{ChatTemplate, Message};
 pub(crate) use gguf::GGufModel;
 
 /// 从指定文件的路径出发，映射所有分片文件。

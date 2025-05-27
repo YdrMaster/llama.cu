@@ -1,4 +1,5 @@
 ﻿mod engine;
+mod engine_manager;
 mod group;
 mod kv_cache;
 mod model;
@@ -26,6 +27,7 @@ pub(crate) enum Command {
 }
 
 pub(crate) enum Output {
+    Ready,
     Overflow(Box<[Session]>),
     Removed(Session),
     Complete {

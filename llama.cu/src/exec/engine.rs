@@ -1,13 +1,11 @@
-﻿mod engine_manager;
-
-use super::{
+﻿use super::{
     Command, Output, Request, Session,
+    engine_manager::{CommandReceiveError, EngineManager, Round},
     group::{ModelGroup, Req},
     kv_cache::KVCache,
     output_head::OutputHead,
 };
 use crate::{handle::Handle, op::FastEmbedding};
-use engine_manager::{CommandReceiveError, EngineManager, Round};
 use log::warn;
 use nn::{Distribution, LLaMA, Tensor};
 use operators::{
@@ -31,20 +29,20 @@ use tokeneer::utok;
 #[cfg(nccl)]
 use operators::nccl::Communicator;
 
-struct SessionStub {
-    session: Session,
-    state: State,
-    prompt: Option<Box<[utok]>>,
+pub(super) struct SessionStub {
+    pub session: Session,
+    pub state: State,
+    pub prompt: Option<Box<[utok]>>,
 }
 
 #[derive(Clone, Copy)]
-struct State {
-    seq: usize,
-    out: usize,
+pub(super) struct State {
+    pub seq: usize,
+    pub out: usize,
 }
 
 impl Request {
-    fn into_stub(self) -> SessionStub {
+    pub(super) fn into_stub(self) -> SessionStub {
         let Request {
             session,
             prompt,
@@ -98,7 +96,6 @@ pub(crate) fn engine(
 
         std::thread::scope(|s| {
             let _threads = comms
-                .into_iter()
                 .map(|comm| {
                     let dist = Distribution::new(comm.rank(), 1, gpus.len());
                     let worker = Worker {
@@ -201,58 +198,61 @@ impl Worker<'_> {
             let mut pre_kv_pairs = ctx.malloc::<KVPair<()>>(max_tok);
             let loading = ctx.stream();
             let stream = ctx.stream();
-            loop {
-                // 接收指令
-                match manager.receive(&commands, &outputs) {
-                    Ok(()) => {}
-                    Err(CommandReceiveError::SendError) => break,
-                    Err(CommandReceiveError::ReceiveError) => {
-                        warn!("command sender dropped");
+            if outputs.send(Output::Ready).is_ok() {
+                loop {
+                    // 接收指令
+                    match manager.receive(&commands, &outputs) {
+                        Ok(()) => {}
+                        Err(CommandReceiveError::SendError) => break,
+                        Err(CommandReceiveError::ReceiveError) => {
+                            warn!("command sender dropped");
+                            break;
+                        }
+                    }
+                    // 组织请求
+                    let Round {
+                        overflow,
+                        tokens,
+                        reqs,
+                        sample,
+                        output,
+                        fast_map,
+                        no_decode,
+                    } = manager.prepare();
+                    if !overflow.is_empty()
+                        && outputs.send(Output::Overflow(overflow.into())).is_err()
+                    {
                         break;
                     }
-                }
-                // 组织请求
-                let Round {
-                    overflow,
-                    tokens,
-                    reqs,
-                    sample,
-                    output,
-                    fast_map,
-                    no_decode,
-                } = manager.prepare();
-                if !overflow.is_empty() && outputs.send(Output::Overflow(overflow.into())).is_err()
-                {
-                    break;
-                }
-                let out_idx = out_idx(&reqs, output.iter().map(|(_, len)| *len), ctx);
-                // 加载输入
-                let (key, tok) = models.load_toks(&tokens, &loading);
-                // 快速启动路径
-                fast_embd.launch(tok, &pre_kv_pairs, fast_map, &mut handle, &loading, &stream);
-                // 通知协处理单元
-                #[cfg(nccl)]
-                if let Some(barrier) = &barrier {
-                    *task_box.write().unwrap() = Some(Task {
-                        key,
-                        reqs: reqs.clone(),
-                    });
-                    barrier.wait();
-                    models.share_toks(key, &mut handle, &stream);
-                }
-                // 推理
-                let x = models.launch(key, &reqs, &mut handle, &stream);
-                // 输出
-                let kv_pairs = output_head.launch(x, out_idx, sample, &mut handle, &stream);
-                stream.memcpy_d2d(&mut pre_kv_pairs[..kv_pairs.len()], &kv_pairs);
-                let output = Output::Complete {
-                    output: output.into(),
-                    kv_pair: kv_pairs.sporulate(),
-                    event: stream.record().sporulate(),
-                    no_decode: no_decode.into(),
-                };
-                if outputs.send(output).is_err() {
-                    break;
+                    let out_idx = out_idx(&reqs, output.iter().map(|(_, len)| *len), ctx);
+                    // 加载输入
+                    let (key, tok) = models.load_toks(&tokens, &loading);
+                    // 快速启动路径
+                    fast_embd.launch(tok, &pre_kv_pairs, fast_map, &mut handle, &loading, &stream);
+                    // 通知协处理单元
+                    #[cfg(nccl)]
+                    if let Some(barrier) = &barrier {
+                        *task_box.write().unwrap() = Some(Task {
+                            key,
+                            reqs: reqs.clone(),
+                        });
+                        barrier.wait();
+                        models.share_toks(key, &mut handle, &stream);
+                    }
+                    // 推理
+                    let x = models.launch(key, &reqs, &mut handle, &stream);
+                    // 输出
+                    let kv_pairs = output_head.launch(x, out_idx, sample, &mut handle, &stream);
+                    stream.memcpy_d2d(&mut pre_kv_pairs[..kv_pairs.len()], &kv_pairs);
+                    let output = Output::Complete {
+                        output: output.into(),
+                        kv_pair: kv_pairs.sporulate(),
+                        event: stream.record().sporulate(),
+                        no_decode: no_decode.into(),
+                    };
+                    if outputs.send(output).is_err() {
+                        break;
+                    }
                 }
             }
             // 通知协处理单元退出
