@@ -1,5 +1,8 @@
-﻿use crate::{BaseArgs, macros::print_now};
-use llama_cu::Session;
+﻿use std::time::{Duration, Instant};
+
+use crate::{BaseArgs, macros::print_now};
+use llama_cu::{Received, Service, Session, SessionId};
+use log::info;
 
 #[derive(Args)]
 pub struct GenerateArgs {
@@ -21,14 +24,43 @@ impl GenerateArgs {
         let gpus = base.gpus();
         let max_steps = base.max_steps();
         let prompt = prompt.unwrap_or("Once upon a time,".into());
-        let (mut session, _handle) = Session::new(base.model, gpus, max_steps, !base.no_cuda_graph);
-        let busy = session.send(prompt.clone(), use_template);
-        let first = busy.receive().unwrap();
-        print_now!("{prompt}{first}");
-        while let Some(text) = busy.receive() {
-            print_now!("{text}")
+
+        let service = Service::new(base.model, &gpus, !base.no_cuda_graph);
+        let session = Session {
+            id: SessionId(0),
+            sample_args: Default::default(),
+            cache: service.terminal().new_cache(),
+        };
+        print_now!("{prompt}");
+        service.terminal().start(session, prompt, use_template);
+
+        let mut prefill = Duration::ZERO;
+        let mut decode = Duration::ZERO;
+        let mut steps = 0;
+        for _ in 0..max_steps {
+            let time = Instant::now();
+            let Received { sessions, outputs } = service.recv();
+            if prefill.is_zero() {
+                prefill = time.elapsed()
+            } else {
+                decode += time.elapsed()
+            }
+            steps += 1;
+
+            for (_, (_, piece)) in outputs {
+                let str = unsafe { std::str::from_utf8_unchecked(&piece) };
+                print_now!("{str}");
+            }
+            if !sessions.is_empty() {
+                break;
+            }
         }
         println!();
-        drop(session)
+        info!("prefill = {prefill:?}, decode = {decode:?}");
+        let time = decode / steps as _;
+        info!(
+            "steps = {steps}, perf: {time:?}/tok, {}tok/s",
+            Duration::from_secs(1).div_duration_f32(time),
+        )
     }
 }

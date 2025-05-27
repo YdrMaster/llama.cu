@@ -2,7 +2,6 @@
 use crate::{
     handle::Handle,
     memory::MemPages,
-    upos,
     utils::{self, destruct},
 };
 use bytesize::ByteSize;
@@ -14,6 +13,9 @@ use operators::{
 };
 use std::time::Instant;
 use tokeneer::utok;
+
+#[allow(non_camel_case_types)]
+type upos = u32;
 
 pub(super) struct ModelExec<'ctx> {
     buf_tok: HostMem<'ctx>,

@@ -22,6 +22,7 @@ use tokeneer::utok;
 pub(crate) use engine::engine;
 
 pub(crate) enum Command {
+    Notify,
     Insert(Request),
     Remove(SessionId),
 }
@@ -46,22 +47,22 @@ pub(crate) struct Request {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[repr(transparent)]
-pub(crate) struct SessionId(pub usize);
+pub struct SessionId(pub usize);
 
-pub(crate) struct Session {
+pub struct Session {
     pub id: SessionId,
     pub sample_args: SampleArgs,
     pub cache: DistKVCache,
 }
 
-pub(crate) struct DistKVCache {
-    pub parts: Arc<[Mutex<KVCache>]>,
-    pub pos: usize,
-    pub len: usize,
+pub struct DistKVCache {
+    parts: Arc<[Mutex<KVCache>]>,
+    pos: usize,
+    len: usize,
 }
 
 impl DistKVCache {
-    pub fn new(template: &Tensor<usize, 2>, parts: &[(Device, usize)]) -> Self {
+    pub(crate) fn new(template: &Tensor<usize, 2>, parts: &[(Device, usize)]) -> Self {
         let total = parts.iter().map(|(_, len)| len).sum::<usize>();
         let parts = parts
             .iter()
@@ -79,7 +80,7 @@ pub(crate) fn decode(
     kv_pair: DevMemSpore,
     event: EventSpore,
     stream: &Stream,
-) -> BTreeMap<SessionId, Box<[utok]>> {
+) -> BTreeMap<SessionId, Vec<utok>> {
     let ctx = stream.ctx();
     let kv_pair = kv_pair.sprout(ctx);
     let mut host = ctx.malloc_host::<KVPair<()>>(kv_pair.len() / size_of::<KVPair<()>>());

@@ -45,21 +45,15 @@ impl EngineManager {
         commands: &Receiver<Command>,
         outputs: &Sender<Output>,
     ) -> Result<(), E> {
-        macro_rules! apply {
-            ($cmd:expr) => {
-                if let Some(session) = self.apply($cmd) {
-                    if outputs.send(Output::Removed(session)).is_err() {
-                        return Err(E::SendError);
-                    }
-                }
-            };
-        }
-
         loop {
             // 总是尝试进行非阻塞接收
             loop {
                 match commands.try_recv() {
-                    Ok(cmd) => apply!(cmd),
+                    Ok(cmd) => {
+                        if !self.apply(cmd, outputs) {
+                            return Err(E::SendError);
+                        }
+                    }
                     Err(TryRecvError::Disconnected) => return Err(E::ReceiveError),
                     Err(TryRecvError::Empty) => break,
                 }
@@ -68,7 +62,11 @@ impl EngineManager {
             if self.sess.is_empty() {
                 // 也没有待处理的任务，阻塞等待
                 match commands.recv() {
-                    Ok(cmd) => apply!(cmd),
+                    Ok(cmd) => {
+                        if !self.apply(cmd, outputs) {
+                            return Err(E::SendError);
+                        }
+                    }
                     Err(_) => break Err(E::ReceiveError),
                 }
             } else {
@@ -136,16 +134,17 @@ impl EngineManager {
         self.sess.into_values()
     }
 
-    fn apply(&mut self, cmd: Command) -> Option<Session> {
+    fn apply(&mut self, cmd: Command, outputs: &Sender<Output>) -> bool {
         match cmd {
+            Command::Notify => outputs.send(Output::Ready).is_ok(),
             Command::Insert(req) => {
                 self.sess.insert(req.session.id, req.into_stub());
-                None
+                true
             }
-            Command::Remove(id) => {
-                // fmt
-                self.sess.remove(&id).map(|stub| stub.session)
-            }
+            Command::Remove(id) => self
+                .sess
+                .remove(&id)
+                .is_none_or(|stub| outputs.send(Output::Removed(stub.session)).is_ok()),
         }
     }
 }

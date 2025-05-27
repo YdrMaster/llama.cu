@@ -1,13 +1,9 @@
 mod chat;
 mod generate;
 mod logger;
-mod service;
 
-use chat::ChatArgs;
 use clap::Parser;
-use generate::GenerateArgs;
 use regex::Regex;
-use service::ServiceArgs;
 use std::{ffi::c_int, path::PathBuf, sync::LazyLock};
 
 #[macro_use]
@@ -18,8 +14,8 @@ fn main() {
     use Commands::*;
     match Cli::parse().command {
         Generate(args) => args.generate(),
-        Chat(args) => args.dialog(),
-        Service(args) => args.service(),
+        Chat(args) => args.chat(),
+        // Service(args) => args.service(),
     }
 }
 
@@ -34,11 +30,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// text generation
-    Generate(GenerateArgs),
+    Generate(generate::GenerateArgs),
     /// chat in console
-    Chat(ChatArgs),
-    /// web service
-    Service(ServiceArgs),
+    Chat(chat::ChatArgs),
+    // /// web service
+    // Service(ServiceArgs),
 }
 
 #[derive(Args)]

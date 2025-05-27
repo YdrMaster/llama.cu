@@ -1,5 +1,5 @@
 ﻿use crate::{BaseArgs, macros::print_now};
-use llama_cu::Session;
+use llama_cu::{Received, Service, Session, SessionId};
 
 #[derive(Args)]
 pub struct ChatArgs {
@@ -8,11 +8,17 @@ pub struct ChatArgs {
 }
 
 impl ChatArgs {
-    pub fn dialog(self) {
+    pub fn chat(self) {
         let Self { base } = self;
         let gpus = base.gpus();
         let max_steps = base.max_steps();
-        let (mut session, _handle) = Session::new(base.model, gpus, max_steps, !base.no_cuda_graph);
+
+        let service = Service::new(base.model, &gpus, !base.no_cuda_graph);
+        let mut session = Some(Session {
+            id: SessionId(0),
+            sample_args: Default::default(),
+            cache: service.terminal().new_cache(),
+        });
 
         let mut line = String::new();
         loop {
@@ -23,11 +29,22 @@ impl ChatArgs {
                 assert_eq!(line.pop(), Some('\n'));
             }
 
-            let busy = session.send(line.clone(), true);
-            let first = busy.receive().unwrap();
-            print_now!("assistant> {first}");
-            while let Some(text) = busy.receive() {
-                print_now!("{text}")
+            service
+                .terminal()
+                .start(session.take().unwrap(), line.clone(), true);
+
+            print_now!("assistant> ");
+            for _ in 0..max_steps {
+                let Received { sessions, outputs } = service.recv();
+
+                for (_, (_, piece)) in outputs {
+                    let str = unsafe { std::str::from_utf8_unchecked(&piece) };
+                    print_now!("{str}");
+                }
+                if let Some((s, _)) = sessions.into_iter().next() {
+                    session = Some(s);
+                    break;
+                }
             }
             println!();
             println!("=== over ===")
