@@ -1,3 +1,4 @@
+mod bench;
 mod chat;
 mod generate;
 mod logger;
@@ -16,6 +17,7 @@ fn main() {
         Generate(args) => args.generate(),
         Chat(args) => args.chat(),
         // Service(args) => args.service(),
+        Bench(args) => args.bench(),
     }
 }
 
@@ -35,6 +37,8 @@ enum Commands {
     Chat(chat::ChatArgs),
     // /// web service
     // Service(ServiceArgs),
+    /// batched benchmark
+    Bench(bench::BenchArgs),
 }
 
 #[derive(Args)]

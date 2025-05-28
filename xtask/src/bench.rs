@@ -1,41 +1,49 @@
-﻿use crate::{BaseArgs, macros::print_now};
+﻿use crate::BaseArgs;
 use llama_cu::{Received, Service, Session, SessionId};
 use log::info;
 use std::time::{Duration, Instant};
 
 #[derive(Args)]
-pub struct GenerateArgs {
+pub struct BenchArgs {
     #[clap(flatten)]
     base: BaseArgs,
     #[clap(short, long)]
     prompt: Option<String>,
     #[clap(short = 't', long)]
     use_template: bool,
+    #[clap(short, long)]
+    batch: Option<usize>,
 }
 
-impl GenerateArgs {
-    pub fn generate(self) {
+impl BenchArgs {
+    pub fn bench(self) {
         let Self {
             base,
             prompt,
             use_template,
+            batch,
         } = self;
         let gpus = base.gpus();
         let max_steps = base.max_steps();
         let prompt = prompt.unwrap_or("Once upon a time,".into());
+        let batch = batch.unwrap_or(1);
 
         let service = Service::new(base.model, &gpus, !base.no_cuda_graph);
-        let session = Session {
-            id: SessionId(0),
-            sample_args: Default::default(),
-            cache: service.terminal().new_cache(),
-        };
-        print_now!("{prompt}");
-        service.terminal().start(session, prompt, use_template);
+        for i in 0..batch {
+            let session = Session {
+                id: SessionId(i),
+                sample_args: Default::default(),
+                cache: service.terminal().new_cache(),
+            };
+            service
+                .terminal()
+                .start(session, prompt.clone(), use_template);
+        }
 
         let mut prefill = Duration::ZERO;
         let mut decode = Duration::ZERO;
-        let mut steps = 0;
+        let mut n_toks = 0;
+        let mut remain = batch;
         for _ in 0..max_steps {
             let time = Instant::now();
             let Received { sessions, outputs } = service.recv();
@@ -44,21 +52,20 @@ impl GenerateArgs {
             } else {
                 decode += time.elapsed()
             }
-            steps += 1;
-
-            for (_, (_, piece)) in outputs {
-                let str = unsafe { std::str::from_utf8_unchecked(&piece) };
-                print_now!("{str}");
-            }
-            if !sessions.is_empty() {
+            n_toks += outputs
+                .into_values()
+                .map(|(tokens, _)| tokens.len())
+                .sum::<usize>();
+            remain -= sessions.len();
+            if remain == 0 {
                 break;
             }
         }
         println!();
         info!("prefill = {prefill:?}, decode = {decode:?}");
-        let time = decode / steps as _;
+        let time = decode / n_toks as _;
         info!(
-            "steps = {steps}, perf: {time:?}/tok, {}tok/s",
+            "n toks = {n_toks}, perf: {time:?}/tok, {}tok/s",
             Duration::from_secs(1).div_duration_f32(time),
         )
     }
