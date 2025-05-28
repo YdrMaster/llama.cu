@@ -53,7 +53,7 @@ pub(crate) struct Request {
     pub out: usize,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 #[repr(transparent)]
 pub struct SessionId(pub usize);
 

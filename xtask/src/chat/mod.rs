@@ -1,4 +1,5 @@
-﻿mod tui;
+﻿mod app_session;
+mod tui;
 
 use crate::{BaseArgs, macros::print_now};
 use llama_cu::{Received, Service, Session, SessionId};
@@ -8,12 +9,15 @@ pub struct ChatArgs {
     #[clap(flatten)]
     base: BaseArgs,
     #[clap(long)]
-    advanced: bool,
+    tui: bool,
 }
 
 impl ChatArgs {
     pub fn chat(self) {
-        let Self { base, advanced } = self;
+        let Self {
+            base,
+            tui: advanced,
+        } = self;
         let gpus = base.gpus();
         let max_steps = base.max_steps();
 
