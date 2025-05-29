@@ -44,13 +44,17 @@ impl BenchArgs {
         let mut decode = Duration::ZERO;
         let mut n_toks = 0;
         let mut remain = batch;
-        for _ in 0..max_steps {
+        let mut steps = 0;
+        while steps < max_steps {
             let time = Instant::now();
             let Received { sessions, outputs } = service.recv();
+            let time = time.elapsed();
+            println!("{steps:03}. time = {time:?}");
+            steps += 1;
             if prefill.is_zero() {
-                prefill = time.elapsed()
+                prefill = time
             } else {
-                decode += time.elapsed()
+                decode += time
             }
             n_toks += outputs
                 .into_values()
@@ -65,7 +69,12 @@ impl BenchArgs {
         info!("prefill = {prefill:?}, decode = {decode:?}");
         let time = decode / n_toks as _;
         info!(
-            "n toks = {n_toks}, perf: {time:?}/tok, {}tok/s",
+            "Throughput: n toks = {n_toks}, perf: {time:?}/tok, {}tok/s",
+            Duration::from_secs(1).div_duration_f32(time),
+        );
+        let time = decode / (steps - 1) as _;
+        info!(
+            "QOS: steps = {steps}, perf: {time:?}/step, {}tok/s",
             Duration::from_secs(1).div_duration_f32(time),
         )
     }

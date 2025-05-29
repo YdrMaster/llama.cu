@@ -57,7 +57,7 @@ impl Request {
     }
 }
 
-const NTOKS: &[usize] = &[1, 8, 32, 128, 512];
+const NTOKS: &[usize] = &[1, 8, 32, 64, 128, 256, 1024];
 
 pub(crate) fn engine(
     llama: LLaMA<Tensor<&[u8], 2>>,
