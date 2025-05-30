@@ -98,14 +98,14 @@ impl ModelExec<'_> {
     }
 
     pub fn load_toks_host(&mut self, toks: &[utok], loading: &Stream) -> &mut [DevByte] {
-        {
-            let len = size_of_val(toks);
-            let src = toks.as_ptr();
-            let dst = self.buf_tok.as_mut_ptr();
-            unsafe { std::ptr::copy_nonoverlapping(src.cast(), dst, len) }
-        }
+        let ([], buf, []) = (unsafe { self.buf_tok.align_to_mut::<utok>() }) else {
+            unreachable!()
+        };
+        buf[..toks.len()].copy_from_slice(toks);
+        buf[toks.len()..].fill(0);
+
         let ans = as_mapped(&self.inputs[0]);
-        loading.memcpy_h2d(ans, &self.buf_tok);
+        loading.memcpy_h2d(ans, buf);
         ans
     }
 
@@ -120,8 +120,9 @@ impl ModelExec<'_> {
         };
         reqs.iter()
             .flat_map(|req| req.pos..req.pos + req.seq)
-            .enumerate()
-            .for_each(|(i, val)| pos[i] = val as _);
+            .chain(std::iter::repeat(0))
+            .zip(&mut *pos)
+            .for_each(|(val, pos)| *pos = val as _);
         loading.memcpy_h2d(as_mapped(&self.inputs[1]), pos);
     }
 
