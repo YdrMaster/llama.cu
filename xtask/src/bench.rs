@@ -56,10 +56,7 @@ impl BenchArgs {
             } else {
                 decode += time
             }
-            n_toks += outputs
-                .into_values()
-                .map(|(tokens, _)| tokens.len())
-                .sum::<usize>();
+            n_toks += outputs.values().map(Vec::len).sum::<usize>();
             remain -= sessions.len();
             if remain == 0 {
                 break;

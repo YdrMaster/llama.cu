@@ -6,7 +6,7 @@ use std::sync::{
     LazyLock, RwLock,
     atomic::{AtomicUsize, Ordering::Relaxed},
 };
-use tokeneer::{Method, Tokeneer};
+use tokeneer::{Method, TextBuf, Tokeneer};
 
 /// A template for rendering chat messages.
 pub(crate) struct ChatTemplate {
@@ -31,10 +31,11 @@ impl GGufModel<'_> {
         let bos = self.tokenizer_ggml_bos_token_id().unwrap();
         let eos = self.tokenizer_ggml_eos_token_id().unwrap();
 
+        let mut buf = TextBuf::new();
         Some(ChatTemplate::new(
             template.into(),
-            tokenizer.decode(&[bos]),
-            tokenizer.decode(&[eos]),
+            tokenizer.decode(&[bos], &mut buf),
+            tokenizer.decode(&[eos], &mut buf),
         ))
     }
 }

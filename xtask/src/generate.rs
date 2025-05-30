@@ -1,5 +1,5 @@
 ﻿use crate::{BaseArgs, macros::print_now};
-use llama_cu::{Received, Service, Session, SessionId};
+use llama_cu::{Received, Service, Session, SessionId, TextBuf};
 use log::info;
 use std::time::{Duration, Instant};
 
@@ -36,6 +36,7 @@ impl GenerateArgs {
         let mut prefill = Duration::ZERO;
         let mut decode = Duration::ZERO;
         let mut steps = 0;
+        let mut buf = TextBuf::new();
         for _ in 0..max_steps {
             let time = Instant::now();
             let Received { sessions, outputs } = service.recv();
@@ -46,9 +47,8 @@ impl GenerateArgs {
             }
             steps += 1;
 
-            for (_, (_, piece)) in outputs {
-                let str = unsafe { std::str::from_utf8_unchecked(&piece) };
-                print_now!("{str}");
+            for (_, tokens) in outputs {
+                print_now!("{}", service.terminal().decode(&tokens, &mut buf))
             }
             if !sessions.is_empty() {
                 break;

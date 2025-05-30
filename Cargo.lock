@@ -226,9 +226,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.24"
+version = "1.2.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16595d3be041c03b09d08d0858631facccee9221e579704070e6e9e4915d3bc7"
+checksum = "d0fc897dc1e865cc67c0e05a836d9d3f1df3cbe442aa4a9473b18e12624a4951"
 dependencies = [
  "shlex",
 ]
@@ -2317,7 +2317,7 @@ dependencies = [
 [[package]]
 name = "tokeneer"
 version = "0.1.0"
-source = "git+https://github.com/InfiniTensor/tokeneer?rev=12c2d99#12c2d99894994cea01d731207435c7c2d181cda1"
+source = "git+https://github.com/InfiniTensor/tokeneer?rev=afbe38e#afbe38ef05f5b907cbec766ceb730f27c431bb8a"
 dependencies = [
  "fancy-regex",
  "ggus",
