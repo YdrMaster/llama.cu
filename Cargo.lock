@@ -100,7 +100,10 @@ dependencies = [
 [[package]]
 name = "arg"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=23e086c#23e086c5c37dfd2acc0b85d611899a02fc2d5629"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=1fff7ec#1fff7ec7f2936cea5243f208f540736b40cf5bd4"
+dependencies = [
+ "symbolic-expr",
+]
 
 [[package]]
 name = "atomic-waker"
@@ -587,7 +590,7 @@ dependencies = [
 [[package]]
 name = "exec"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=23e086c#23e086c5c37dfd2acc0b85d611899a02fc2d5629"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=1fff7ec#1fff7ec7f2936cea5243f208f540736b40cf5bd4"
 dependencies = [
  "arg",
  "graph",
@@ -800,7 +803,7 @@ checksum = "a8d1add55171497b4705a648c6b583acafb01d58050a51727785f0b2c8e0a2b2"
 [[package]]
 name = "graph"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=23e086c#23e086c5c37dfd2acc0b85d611899a02fc2d5629"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=1fff7ec#1fff7ec7f2936cea5243f208f540736b40cf5bd4"
 
 [[package]]
 name = "h2"
@@ -1294,7 +1297,7 @@ dependencies = [
 [[package]]
 name = "mem"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=23e086c#23e086c5c37dfd2acc0b85d611899a02fc2d5629"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=1fff7ec#1fff7ec7f2936cea5243f208f540736b40cf5bd4"
 dependencies = [
  "arg",
  "exec",
@@ -1416,7 +1419,7 @@ checksum = "86a1db1a5ed8293057d401ebd96872cb881a3693d9b55379ae320f652aea3714"
 [[package]]
 name = "nn"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/InfiniNN?rev=23e086c#23e086c5c37dfd2acc0b85d611899a02fc2d5629"
+source = "git+https://github.com/YdrMaster/InfiniNN?rev=1fff7ec#1fff7ec7f2936cea5243f208f540736b40cf5bd4"
 dependencies = [
  "arg",
  "graph",
@@ -1443,6 +1446,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4a28e057d01f97e61255210fcff094d74ed0466038633e95017f5beb68e4399"
 dependencies = [
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "num-bigint"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
+dependencies = [
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
+name = "num-integer"
+version = "0.1.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "num-rational"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
+dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
 ]
 
 [[package]]
@@ -2168,6 +2201,14 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "symbolic-expr"
+version = "0.1.0"
+source = "git+https://github.com/Ceng23333/symbolic-expr.git?rev=ece2d88#ece2d88da773ee6d0e994b0d231a8820d02b8119"
+dependencies = [
+ "num-rational",
+]
 
 [[package]]
 name = "syn"

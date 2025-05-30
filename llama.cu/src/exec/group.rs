@@ -2,8 +2,7 @@
 use crate::{handle::Handle, memory::MemPages};
 use log::debug;
 use nn::{
-    Dim, Distribution, Graph, GraphBuilder, LLaMA, NNGraph, Tensor, TensorMeta,
-    digit_layout::types, op,
+    Distribution, Graph, GraphBuilder, LLaMA, NNGraph, Tensor, TensorMeta, digit_layout::types, op,
 };
 use operators::{
     attention_kv_cached::cuda::Operator as Attn,
@@ -48,8 +47,8 @@ impl<'ctx> ModelGroup<'ctx> {
             .build(
                 llama.tensor_parallel(dist),
                 [
-                    TensorMeta::new(types::U32, [Dim::var("n_tok")]),
-                    TensorMeta::new(types::U32, [Dim::var("n_tok")]),
+                    TensorMeta::new(types::U32, ["n_tok".into()]),
+                    TensorMeta::new(types::U32, ["n_tok".into()]),
                 ],
             )
             .unwrap();
