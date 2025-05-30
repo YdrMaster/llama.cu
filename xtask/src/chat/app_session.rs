@@ -11,11 +11,12 @@ pub(super) struct AppSession {
 impl AppSession {
     pub fn new(name: impl ToString, cache: DistKVCache) -> Self {
         static ID: AtomicUsize = AtomicUsize::new(0);
+        let session_id = SessionId(ID.fetch_add(1, SeqCst));
         Self {
-            name: name.to_string(),
+            name: format!("{} {}", name.to_string(), session_id.0),
             msgs: vec![String::new()],
             info: Some(Session {
-                id: SessionId(ID.fetch_add(1, SeqCst)),
+                id: session_id,
                 sample_args: Default::default(),
                 cache,
             }),

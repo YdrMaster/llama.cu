@@ -102,11 +102,12 @@ impl App {
             title = title.fg(Color::Black).bg(Color::LightBlue);
         }
 
-        let items = self.sessions.iter().map(|(_, s)| {
-            if s.is_busy() {
-                Span::raw(format!("[{}]", s.name()))
+        let items = self.sess_list.iter().map(|id| {
+            let session = &self.sessions[id];
+            if session.is_busy() {
+                Span::raw(format!("[{}]", session.name()))
             } else {
-                Span::raw(s.name())
+                Span::raw(session.name())
             }
         });
         let mut style = Style::default().add_modifier(Modifier::BOLD);
@@ -216,7 +217,10 @@ impl App {
             .last_sentence_mut();
         match (key.modifiers, key.code) {
             (CTRL, KeyCode::Char('c') | KeyCode::Char('C')) => self.stop = true,
-            (_, KeyCode::Esc) => self.cancel(),
+            (_, KeyCode::Esc) => {
+                let id_to_cancel = self.sess_list[self.current];
+                self.cancel(id_to_cancel);
+            }
 
             (_, KeyCode::Char(ch)) if self.focus.chat() => message.push(ch),
             (SHIFT, KeyCode::Enter) if self.focus.chat() => message.push('\n'),
@@ -243,6 +247,19 @@ impl App {
                 let session = AppSession::new("new session", self.service.terminal().new_cache());
                 self.sess_list.push(session.id());
                 self.sessions.insert(session.id(), session);
+                self.current = self.sess_list.len() - 1;
+                self.focus = Focus::List(self.current);
+            }
+            (_, KeyCode::Char('-')) if self.focus.select() => {
+                if self.sess_list.len() > 1 {
+                    let id_to_remove = self.sess_list[self.current];
+                    self.sessions.remove(&id_to_remove);
+                    self.sess_list.remove(self.current);
+                    self.current = self.current.min(self.sess_list.len().saturating_sub(1));
+                    if let Focus::List(i) = &mut self.focus {
+                        *i = (*i).min(self.sess_list.len().saturating_sub(1));
+                    }
+                }
             }
             _ => {}
         }
@@ -267,9 +284,9 @@ impl App {
         }
     }
 
-    fn cancel(&mut self) {
+    fn cancel(&mut self, id_to_cancel: SessionId) {
         if let State::Assistant = self.state() {
-            self.service.terminal().stop(SessionId(0));
+            self.service.terminal().stop(id_to_cancel);
         }
     }
 }
