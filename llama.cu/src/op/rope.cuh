@@ -10,7 +10,7 @@ static __device__ void padding(
     float const *__restrict__ sin_table,
     float const *__restrict__ cos_table) {
 
-    auto nh_l = blockDim.y,
+    int nh_l = blockDim.y,
          dh_div_2 = blockDim.x,
          it = blockIdx.y,
          ih_h = blockIdx.x,

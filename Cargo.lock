@@ -270,9 +270,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.38"
+version = "4.5.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed93b9805f8ba930df42c2590f05453d5ec36cbb85d018868a5b24d31f6ac000"
+checksum = "fd60e63e9be68e5fb56422e397cf9baddded06dae1d2e523401542383bc72a9f"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -280,9 +280,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.38"
+version = "4.5.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "379026ff283facf611b0ea629334361c4211d1b12ee01024eec1591133b04120"
+checksum = "89cc6392a1f72bbeb820d71f32108f61fdaf18bc526e1d23954168a67759ef51"
 dependencies = [
  "anstream",
  "anstyle",
@@ -445,7 +445,7 @@ checksum = "43da5946c66ffcc7745f48db692ffbb10a83bfe0afd96235c5c2a4fb23994929"
 [[package]]
 name = "cublas"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=077b425#077b425899766fc85c3da09da68af78087ffa71b"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=6eda971#6eda9713a2e863014b973b7ed9845de696fcf039"
 dependencies = [
  "bindgen",
  "build-script-cfg 0.1.0",
@@ -453,12 +453,13 @@ dependencies = [
  "find_cuda_helper",
  "half",
  "search-corex-tools",
+ "search-maca-tools",
 ]
 
 [[package]]
 name = "cuda"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=077b425#077b425899766fc85c3da09da68af78087ffa71b"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=6eda971#6eda9713a2e863014b973b7ed9845de696fcf039"
 dependencies = [
  "bindgen",
  "build-script-cfg 0.1.0",
@@ -466,6 +467,7 @@ dependencies = [
  "find_cuda_helper",
  "log",
  "search-corex-tools",
+ "search-maca-tools",
 ]
 
 [[package]]
@@ -622,9 +624,9 @@ dependencies = [
 
 [[package]]
 name = "flexi_logger"
-version = "0.30.1"
+version = "0.30.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcd71620581c99445892ad71e2c2e0d6f62edf2e22822556f0d2ee9f8508af29"
+checksum = "cb03342077df16d5b1400d7bed00156882846d7a479ff61a6f10594bcc3423d8"
 dependencies = [
  "chrono",
  "log",
@@ -953,6 +955,7 @@ version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1c293b6b3d21eca78250dc7dbebd6b9210ec5530e038cbfe0661b5c47ab06e8"
 dependencies = [
+ "base64",
  "bytes",
  "futures-channel",
  "futures-core",
@@ -960,12 +963,16 @@ dependencies = [
  "http",
  "http-body",
  "hyper",
+ "ipnet",
  "libc",
+ "percent-encoding",
  "pin-project-lite",
  "socket2",
+ "system-configuration",
  "tokio",
  "tower-service",
  "tracing",
+ "windows-registry",
 ]
 
 [[package]]
@@ -1141,6 +1148,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "469fb0b9cefa57e3ef31275ee7cacb78f2fdca44e4765491884a2b119d4eb130"
 
 [[package]]
+name = "iri-string"
+version = "0.7.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dbc5ebe9c3a1a7a5127f920a418f7585e9e758e911d0466ed004f393b0e380b2"
+dependencies = [
+ "memchr",
+ "serde",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1234,7 +1251,6 @@ dependencies = [
  "operators",
  "rand",
  "regex",
- "search-cuda-tools 0.0.0 (git+https://github.com/YdrMaster/cuda-driver?rev=f3ffbcc)",
  "serde",
  "smallvec",
  "tokeneer",
@@ -1242,9 +1258,9 @@ dependencies = [
 
 [[package]]
 name = "lock_api"
-version = "0.4.12"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07af8b9cdd281b7915f413fa73f29ebd5d55d0d3f0155584dade1ff18cea1b17"
+checksum = "96936507f153605bddfcda068dd804796c84324ed2510809e5b2a624c81da765"
 dependencies = [
  "autocfg",
  "scopeguard",
@@ -1381,13 +1397,14 @@ dependencies = [
 [[package]]
 name = "nccl"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=077b425#077b425899766fc85c3da09da68af78087ffa71b"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=6eda971#6eda9713a2e863014b973b7ed9845de696fcf039"
 dependencies = [
  "bindgen",
  "build-script-cfg 0.1.0",
  "cuda",
  "digit-layout",
- "search-cuda-tools 0.0.0 (git+https://github.com/YdrMaster/cuda-driver?rev=077b425)",
+ "search-cuda-tools",
+ "search-maca-tools",
 ]
 
 [[package]]
@@ -1481,9 +1498,9 @@ checksum = "a4895175b425cb1f87721b59f0f286c2092bd4af812243672510e1ac53e2e0ad"
 
 [[package]]
 name = "openssl"
-version = "0.10.72"
+version = "0.10.73"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fedfea7d58a1f73118430a55da6a286e7b044961736ce96a16a17068ea25e5da"
+checksum = "8505734d46c8ab1e19a1dce3aef597ad87dcb4c37e7188231769bd6bd51cebf8"
 dependencies = [
  "bitflags",
  "cfg-if",
@@ -1513,9 +1530,9 @@ checksum = "d05e27ee213611ffe7d6348b942e8f942b37114c00cc03cec254295a4a17852e"
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.108"
+version = "0.9.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e145e1651e858e820e4860f7b9c5e169bc1d8ce1c86043be79fa7b7634821847"
+checksum = "90096e2e47630d78b7d1c20952dc621f957103f8bc2c8359ec81290d75238571"
 dependencies = [
  "cc",
  "libc",
@@ -1526,7 +1543,7 @@ dependencies = [
 [[package]]
 name = "operators"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/operators-rs?rev=ed28f2d#ed28f2d604e531e5292b0558794a8c285d8a3fe8"
+source = "git+https://github.com/YdrMaster/operators-rs?rev=13859bd#13859bdfdc5e546b6c97a476a282d16e60c6cb52"
 dependencies = [
  "build-script-cfg 0.0.0",
  "cublas",
@@ -1544,15 +1561,16 @@ dependencies = [
  "rayon",
  "search-cl-tools",
  "search-corex-tools",
- "search-cuda-tools 0.0.0 (git+https://github.com/YdrMaster/cuda-driver?rev=077b425)",
+ "search-cuda-tools",
  "search-infini-tools",
+ "search-maca-tools",
 ]
 
 [[package]]
 name = "parking_lot"
-version = "0.12.3"
+version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1bf18183cf54e8d6059647fc3063646a1801cf30896933ec2311622cc4b9a27"
+checksum = "70d58bf43669b5795d1576d0641cfb6fbb2057bf629506267a92807158584a13"
 dependencies = [
  "lock_api",
  "parking_lot_core",
@@ -1560,9 +1578,9 @@ dependencies = [
 
 [[package]]
 name = "parking_lot_core"
-version = "0.9.10"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e401f977ab385c9e4e3ab30627d6f26d00e2c73eef317493c4ec6d468726cf8"
+checksum = "bc838d2a56b5b1a6c25f55575dfc605fabb63bb2365f6c2353ef9159aa69e4a5"
 dependencies = [
  "cfg-if",
  "libc",
@@ -1781,9 +1799,9 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
 name = "reqwest"
-version = "0.12.15"
+version = "0.12.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d19c46a6fdd48bc4dab94b6103fccc55d34c67cc0ad04653aad4ea2a07cd7bbb"
+checksum = "e98ff6b0dbbe4d5a37318f433d4fc82babd21631f194d370409ceb2e40b2f0b5"
 dependencies = [
  "base64",
  "bytes",
@@ -1806,23 +1824,22 @@ dependencies = [
  "once_cell",
  "percent-encoding",
  "pin-project-lite",
- "rustls-pemfile",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "serde_urlencoded",
  "sync_wrapper",
- "system-configuration",
  "tokio",
  "tokio-native-tls",
  "tokio-util",
  "tower",
+ "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
- "windows-registry",
 ]
 
 [[package]]
@@ -1891,15 +1908,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustls-pemfile"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dce314e5fee3f39953d46bb63bb8a46d40c2f8fb7cc5a3b6cab2bde9721d6e50"
-dependencies = [
- "rustls-pki-types",
-]
-
-[[package]]
 name = "rustls-pki-types"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1954,20 +1962,12 @@ source = "git+https://github.com/InfiniTensor/clrt?rev=984ac7a#984ac7a2f6088d990
 [[package]]
 name = "search-corex-tools"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=077b425#077b425899766fc85c3da09da68af78087ffa71b"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=6eda971#6eda9713a2e863014b973b7ed9845de696fcf039"
 
 [[package]]
 name = "search-cuda-tools"
 version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=077b425#077b425899766fc85c3da09da68af78087ffa71b"
-dependencies = [
- "find_cuda_helper",
-]
-
-[[package]]
-name = "search-cuda-tools"
-version = "0.0.0"
-source = "git+https://github.com/YdrMaster/cuda-driver?rev=f3ffbcc#f3ffbcc6a5fb4d29ad5af97b422a3e9b0ab5b1b2"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=6eda971#6eda9713a2e863014b973b7ed9845de696fcf039"
 dependencies = [
  "find_cuda_helper",
 ]
@@ -1976,6 +1976,11 @@ dependencies = [
 name = "search-infini-tools"
 version = "0.0.0"
 source = "git+https://github.com/InfiniTensor/infini-toolkit?rev=e8362c3#e8362c34d3fc3778f582dd3b0a55fae5cd9cb60c"
+
+[[package]]
+name = "search-maca-tools"
+version = "0.1.0"
+source = "git+https://github.com/YdrMaster/cuda-driver?rev=6eda971#6eda9713a2e863014b973b7ed9845de696fcf039"
 
 [[package]]
 name = "security-framework"
@@ -2362,6 +2367,24 @@ dependencies = [
  "pin-project-lite",
  "sync_wrapper",
  "tokio",
+ "tower-layer",
+ "tower-service",
+]
+
+[[package]]
+name = "tower-http"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fdb0c213ca27a9f57ab69ddb290fd80d970922355b83ae380b395d3986b8a2e"
+dependencies = [
+ "bitflags",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-body",
+ "iri-string",
+ "pin-project-lite",
+ "tower",
  "tower-layer",
  "tower-service",
 ]
