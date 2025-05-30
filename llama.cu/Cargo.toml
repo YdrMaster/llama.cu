@@ -9,7 +9,7 @@ operators = { git = "https://github.com/YdrMaster/operators-rs", rev = "ed28f2d"
 ] }
 nn = { git = "https://github.com/YdrMaster/InfiniNN", rev = "1fff7ec" }
 ggus = { git = "https://github.com/InfiniTensor/gguf", rev = "23c362f" }
-tokeneer = { git = "https://github.com/InfiniTensor/tokeneer", rev = "12c2d99" }
+tokeneer = { git = "https://github.com/InfiniTensor/tokeneer", rev = "afbe38e" }
 
 bytesize = "2.0"
 log.workspace = true

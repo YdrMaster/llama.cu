@@ -1,10 +1,11 @@
-﻿use llama_cu::{DistKVCache, Session, SessionId};
+﻿use llama_cu::{DistKVCache, Session, SessionId, TextBuf};
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 pub(super) struct AppSession {
     name: String,
     msgs: Vec<String>,
     info: Option<Session>,
+    pub buf: TextBuf,
 }
 
 impl AppSession {
@@ -18,6 +19,7 @@ impl AppSession {
                 sample_args: Default::default(),
                 cache,
             }),
+            buf: TextBuf::new(),
         }
     }
 

@@ -2,7 +2,7 @@
 mod tui;
 
 use crate::{BaseArgs, macros::print_now};
-use llama_cu::{Received, Service, Session, SessionId};
+use llama_cu::{Received, Service, Session, SessionId, TextBuf};
 
 #[derive(Args)]
 pub struct ChatArgs {
@@ -53,13 +53,13 @@ fn simple(service: Service, max_steps: usize) {
             .terminal()
             .start(session.take().unwrap(), line.clone(), true);
 
+        let mut buf = TextBuf::new();
         print_now!("assistant> ");
         for _ in 0..max_steps {
             let Received { sessions, outputs } = service.recv();
 
-            for (_, (_, piece)) in outputs {
-                let str = unsafe { std::str::from_utf8_unchecked(&piece) };
-                print_now!("{str}");
+            for (_, tokens) in outputs {
+                print_now!("{}", service.terminal().decode(&tokens, &mut buf))
             }
             if let Some((s, _)) = sessions.into_iter().next() {
                 session = Some(s);

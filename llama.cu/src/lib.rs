@@ -29,6 +29,7 @@ use std::{
 use tokeneer::{Bpe, Tokeneer, utok};
 
 pub use exec::{DistKVCache, Session, SessionId};
+pub use tokeneer::TextBuf;
 
 pub struct Service {
     handle: Option<(Receiver<Output>, std::thread::JoinHandle<()>)>,
@@ -50,7 +51,7 @@ pub enum ReturnReason {
 #[derive(Default)]
 pub struct Received {
     pub sessions: Vec<(Session, ReturnReason)>,
-    pub outputs: BTreeMap<SessionId, (Vec<utok>, Vec<u8>)>,
+    pub outputs: BTreeMap<SessionId, Vec<utok>>,
 }
 
 struct ModelComponents {
@@ -165,10 +166,7 @@ impl Service {
                     {
                         tokens.truncate(len)
                     }
-                    let piece = components.tokenizer.decode(&tokens).into_bytes();
-                    let (tokens_, piece_) = received.outputs.entry(id).or_default();
-                    tokens_.extend(tokens);
-                    piece_.extend(piece);
+                    received.outputs.entry(id).or_default().extend(tokens)
                 }
             }
             Output::Ready => unreachable!(),
@@ -230,5 +228,9 @@ impl Terminal {
 
     pub fn stop(&self, id: SessionId) -> bool {
         self.sender.send(Command::Remove(id)).is_ok()
+    }
+
+    pub fn decode(&self, tokens: &[utok], buf: &mut TextBuf) -> String {
+        self.components.wait().tokenizer.decode(tokens, buf)
     }
 }

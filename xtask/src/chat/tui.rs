@@ -257,13 +257,10 @@ impl App {
 
     fn handle_service(&mut self) {
         let Received { sessions, outputs } = self.service.try_recv();
-        for (id, (_, piece)) in outputs {
-            let str = unsafe { std::str::from_utf8_unchecked(&piece) };
-            self.sessions
-                .get_mut(&id)
-                .unwrap()
-                .last_sentence_mut()
-                .push_str(str)
+        for (id, tokens) in outputs {
+            let session = self.sessions.get_mut(&id).unwrap();
+            let str = self.service.terminal().decode(&tokens, &mut session.buf);
+            session.last_sentence_mut().push_str(&str)
         }
         if let Some((session, _)) = sessions.into_iter().next() {
             self.sessions.get_mut(&session.id).unwrap().idle(session)
