@@ -4,7 +4,6 @@ mod all_reduce;
 mod embedding;
 mod fast_embedding;
 mod linear;
-mod random_sample;
 mod rms_norm;
 mod rope;
 mod swiglu;
@@ -15,6 +14,8 @@ use nn::{
     digit_layout::{DigitLayout, types},
 };
 use operators::cuda::{Stream, VirByte};
+
+pub mod random_sample;
 
 #[cfg(nccl)]
 pub use all_reduce::AllReduce;

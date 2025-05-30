@@ -1,37 +1,25 @@
 ﻿use crate::{
     handle::Handle,
     load::WeightLoader,
-    op::{self, Operator as _},
-    utils::{dims, layout, offset_ptr},
-};
-use nn::{
-    Arg, Linear, NormType, Normalization, Tensor, digit_layout::types, ndarray_layout::ArrayLayout,
-};
-use operators::{
-    Operator as _, TensorLayout,
-    cuda::{CurrentCtx, DevMem, HostMem, Stream, VirByte},
-    random_sample::{
-        Args as SampleArgs, Indices, KVPair, RandomSample, SampleArgs as Config,
-        cuda::Operator as Sample,
+    op::{
+        self, Operator as _,
+        random_sample::{KV_PAIR, KVPair, RandomSample, SampleArgs},
     },
+    utils::dims,
 };
+use nn::{Arg, Linear, NormType, Normalization, Tensor, digit_layout::types};
+use operators::cuda::{CurrentCtx, DevMem, HostMem, Stream, VirByte};
 use tokeneer::utok;
 
 pub(super) struct OutputHead<'ctx> {
     norm: Tensor<DevMem<'ctx>, 2>,
     linear: Tensor<DevMem<'ctx>, 2>,
     epsilon: Option<Arg>,
-
-    sample: Sample,
-    indices: Tensor<DevMem<'ctx>, 2>,
+    sample: RandomSample<'ctx>,
 }
 
 impl<'ctx> OutputHead<'ctx> {
-    pub fn new(
-        nn: nn::OutputHead<Tensor<&[u8], 2>>,
-        sample: Sample,
-        ctx: &'ctx CurrentCtx,
-    ) -> Self {
+    pub fn new(nn: nn::OutputHead<Tensor<&[u8], 2>>, ctx: &'ctx CurrentCtx) -> Self {
         let nn::OutputHead {
             out_norm: Normalization { items, epsilon, .. },
             lm_head: Linear { weight, .. },
@@ -40,8 +28,8 @@ impl<'ctx> OutputHead<'ctx> {
             NormType::RmsNorm { scale, .. } => scale,
             NormType::LayerNorm { .. } => todo!(),
         };
-        let linear = weight;
-        dims!([nvoc, _] = linear);
+
+        dims!([_, n] = weight);
 
         let stream = ctx.stream();
         let mut loader = WeightLoader::new([]);
@@ -56,23 +44,19 @@ impl<'ctx> OutputHead<'ctx> {
 
         Self {
             norm: load(norm),
-            linear: load(linear),
+            linear: load(weight),
             epsilon: Some(epsilon.into()),
-            sample,
-            indices: {
-                let Indices { n, mem } = Sample::build_indices(nvoc, &stream);
-                Tensor::from_dim_slice(types::U32, [n]).map(|_| mem)
-            },
+            sample: RandomSample::new(n, ctx),
         }
     }
 }
 
 impl OutputHead<'_> {
     pub fn launch<'ctx>(
-        &self,
+        &mut self,
         x: Tensor<*const VirByte, 2>,
         out_idx: HostMem,
-        config: impl IntoIterator<Item = Config>,
+        config: impl IntoIterator<Item = SampleArgs>,
         handle: &mut Handle,
         stream: &Stream<'ctx>,
     ) -> DevMem<'ctx> {
@@ -81,7 +65,6 @@ impl OutputHead<'_> {
             linear,
             epsilon,
             sample,
-            indices,
         } = self;
         dims!([_, d] = x);
         let out_idx = stream.from_host::<u8>(&out_idx);
@@ -113,33 +96,16 @@ impl OutputHead<'_> {
             [logits.clone()],
             stream,
         );
-        let mut kv_pair = stream.malloc::<KVPair<()>>(out_len);
+        let kv_pair = stream.malloc::<KVPair>(out_len);
         for (i, config) in config.into_iter().enumerate() {
-            let logit = logits.clone().transform(|layout| layout.index(0, i));
-            let kv_pair = &mut kv_pair[i * size_of::<KVPair<()>>()..];
-            sample
-                .launch(
-                    &SampleArgs {
-                        kv_pair: TensorLayout {
-                            dt: KVPair::<()>::LAYOUT,
-                            layout: ArrayLayout::new(&[], &[], 0),
-                        },
-                        kv_pair_base: kv_pair.as_mut_ptr(),
-                        logits: layout(&logit),
-                        logits_base: offset_ptr(&logits).cast(),
-                        indices: layout(indices),
-                        indices_base: indices.get().as_ptr(),
-                        seed: if config.is_argmax() {
-                            1.
-                        } else {
-                            rand::random()
-                        },
-                        config,
-                    },
-                    &mut [],
-                    stream,
-                )
-                .unwrap()
+            let logits = logits.clone().transform(|layout| layout.index(0, i));
+            let kv_pair = Tensor::from_dim_slice(KV_PAIR, &[])
+                .map(|_| kv_pair[i * size_of::<KVPair>()..].as_ptr().cast());
+            if config.is_argmax() {
+                sample.argmax(kv_pair, logits, stream)
+            } else {
+                sample.sample(kv_pair, logits, config, rand::random(), stream)
+            }
         }
         kv_pair
     }

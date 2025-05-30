@@ -1,7 +1,6 @@
 ﻿use super::{Command, Output, Session, SessionId, engine::SessionStub, group::Req};
-use crate::exec::KVCache;
+use crate::{exec::KVCache, op::random_sample::SampleArgs};
 use log::warn;
-use operators::random_sample::SampleArgs;
 use std::{
     collections::BTreeMap,
     iter::repeat_n,

@@ -5,13 +5,15 @@
     kv_cache::KVCache,
     output_head::OutputHead,
 };
-use crate::{handle::Handle, op::FastEmbedding};
+use crate::{
+    handle::Handle,
+    op::{FastEmbedding, random_sample::KVPair},
+};
 use nn::{Distribution, LLaMA, Tensor};
 use operators::{
     Operator,
     attention_kv_cached::cuda::Operator as Attn,
     cuda::{ContextResource, CurrentCtx, Device, Gpu, HostMem},
-    random_sample::{KVPair, cuda::Operator as Sample},
 };
 use std::{
     ffi::c_int,
@@ -177,7 +179,6 @@ impl Worker<'_> {
 
         let gpu = Gpu::new(dev.retain_primary(), Default::default());
         let attn = Attn::new(&gpu);
-        let sample = Sample::new(&gpu);
         gpu.apply(|ctx| {
             let mut handle = handle(ctx);
             let mut models = ModelGroup::new(
@@ -190,12 +191,12 @@ impl Worker<'_> {
                 use_cuda_graph,
             );
 
-            let output_head = OutputHead::new(output_head, sample, ctx);
+            let mut output_head = OutputHead::new(output_head, ctx);
 
             let mut manager = EngineManager::default();
             let max_tok = *ntoks.last().unwrap();
             let mut fast_embd = FastEmbedding::new(max_tok, ctx);
-            let mut pre_kv_pairs = ctx.malloc::<KVPair<()>>(max_tok);
+            let mut pre_kv_pairs = ctx.malloc::<KVPair>(max_tok);
             let loading = ctx.stream();
             let stream = ctx.stream();
             if outputs.send(Output::Ready).is_ok() {

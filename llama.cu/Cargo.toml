@@ -27,4 +27,5 @@ minijinja = { version = "2.10", default-features = false, features = [
 [build-dependencies]
 bindgen = { version = "0.71" }
 build-script-cfg = "0.1"
-search-cuda-tools = { git = "https://github.com/YdrMaster/cuda-driver", rev = "f3ffbcc" }
+search-cuda-tools = { git = "https://github.com/YdrMaster/cuda-driver", rev = "106f0b6" }
+search-maca-tools = { git = "https://github.com/YdrMaster/cuda-driver", rev = "106f0b6" }
