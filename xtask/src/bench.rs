@@ -1,5 +1,5 @@
 ﻿use crate::BaseArgs;
-use llama_cu::{Received, Service, Session, SessionId};
+use llama_cu::{Message, Received, Service, Session, SessionId};
 use log::info;
 use std::time::{Duration, Instant};
 
@@ -25,10 +25,14 @@ impl BenchArgs {
         } = self;
         let gpus = base.gpus();
         let max_steps = base.max_steps();
-        let prompt = prompt.unwrap_or("Once upon a time,".into());
+        let mut prompt = prompt.unwrap_or("Once upon a time,".into());
         let batch = batch.unwrap_or(1);
 
         let service = Service::new(base.model, &gpus, !base.no_cuda_graph);
+        if use_template {
+            prompt = service.terminal().render(&[Message::user(&prompt)]).into()
+        }
+
         for i in 0..batch {
             let session = Session {
                 id: SessionId(i),
@@ -37,7 +41,7 @@ impl BenchArgs {
             };
             service
                 .terminal()
-                .start(session, prompt.clone(), use_template);
+                .start(session, &service.terminal().tokenize(&prompt));
         }
 
         let mut prefill = Duration::ZERO;

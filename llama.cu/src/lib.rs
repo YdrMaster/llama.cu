@@ -14,7 +14,6 @@ use crate::{
 use exec::Request;
 use ggus::GGufMetaMapExt;
 use log::info;
-use model::Message;
 use nn::Tensor;
 use operators::cuda::{self, Device};
 use std::{
@@ -29,6 +28,7 @@ use std::{
 use tokeneer::{Bpe, Tokeneer, utok};
 
 pub use exec::{DistKVCache, Session, SessionId};
+pub use model::Message;
 pub use tokeneer::TextBuf;
 
 pub struct Service {
@@ -36,6 +36,7 @@ pub struct Service {
     terminal: Terminal,
 }
 
+#[derive(Clone)]
 pub struct Terminal {
     sender: Sender<Command>,
     cache_parts: Box<[(Device, usize)]>,
@@ -196,31 +197,25 @@ impl Terminal {
         DistKVCache::new(&self.components.wait().cache_template, &self.cache_parts)
     }
 
-    pub fn start(&self, session: Session, mut prompt: String, use_template: bool) -> bool {
-        let ModelComponents {
-            tokenizer,
-            chat_template,
-            ..
-        } = self.components.wait();
+    pub fn render(&self, msgs: &[Message]) -> String {
+        self.components
+            .wait()
+            .chat_template
+            .as_ref()
+            .unwrap()
+            .render(msgs, true)
+            .unwrap()
+    }
 
-        if use_template {
-            if let Some(chat_template) = &chat_template {
-                prompt = chat_template
-                    .render(
-                        &[Message {
-                            role: "user",
-                            content: &prompt,
-                        }],
-                        true,
-                    )
-                    .unwrap()
-            }
-        }
+    pub fn tokenize<'s>(&self, text: &'s str) -> Vec<utok> {
+        self.components.wait().tokenizer.encode(text)
+    }
 
+    pub fn start(&self, session: Session, tokens: &[utok]) -> bool {
         self.sender
             .send(Command::Insert(Request {
                 session,
-                prompt: tokenizer.encode(&prompt).into(),
+                prompt: tokens.to_vec().into(),
                 out: 1,
             }))
             .is_ok()

@@ -16,9 +16,19 @@ pub(crate) struct ChatTemplate {
 }
 
 #[derive(Serialize)]
-pub(crate) struct Message<'a> {
+pub struct Message<'a> {
     pub role: &'a str,
     pub content: &'a str,
+}
+
+impl<'a> Message<'a> {
+    #[inline]
+    pub const fn user(str: &'a str) -> Self {
+        Self {
+            role: "user",
+            content: str,
+        }
+    }
 }
 
 impl GGufModel<'_> {
@@ -109,13 +119,7 @@ fn test() {
     const MINICPM: &str = "{% for message in messages %}{% if message['role'] == 'user' %}{{'<用户>' + message['content'].strip() + '<AI>'}}{% else %}{{message['content'].strip()}}{% endif %}{% endfor %}";
 
     let result = ChatTemplate::new(TAIDE.into(), "<s>".into(), "</s>".into())
-        .render(
-            &[Message {
-                role: "user",
-                content: "Hello, who are you?",
-            }],
-            true,
-        )
+        .render(&[Message::user("Hello, who are you?")], true)
         .unwrap();
 
     assert_eq!(
@@ -124,13 +128,7 @@ fn test() {
     );
 
     let result = ChatTemplate::new(MINICPM.into(), "<s>".into(), "</s>".into())
-        .render(
-            &[Message {
-                role: "user",
-                content: "Hello, who are you?",
-            }],
-            true,
-        )
+        .render(&[Message::user("Hello, who are you?")], true)
         .unwrap();
     assert_eq!(result, "<用户>Hello, who are you?<AI>");
 }

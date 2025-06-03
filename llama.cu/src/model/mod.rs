@@ -10,8 +10,10 @@ use nn::{
 };
 use std::{fmt::Debug, fs::File, path::Path};
 
-pub(crate) use chat_template::{ChatTemplate, Message};
+pub(crate) use chat_template::ChatTemplate;
 pub(crate) use gguf::GGufModel;
+
+pub use chat_template::Message;
 
 /// 从指定文件的路径出发，映射所有分片文件。
 pub(crate) fn map_files(path: impl AsRef<Path>) -> Box<[Mmap]> {

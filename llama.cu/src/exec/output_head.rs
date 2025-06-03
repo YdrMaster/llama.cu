@@ -99,7 +99,7 @@ impl OutputHead<'_> {
         let kv_pair = stream.malloc::<KVPair>(out_len);
         for (i, config) in config.into_iter().enumerate() {
             let logits = logits.clone().transform(|layout| layout.index(0, i));
-            let kv_pair = Tensor::from_dim_slice(KV_PAIR, &[])
+            let kv_pair = Tensor::from_dim_slice(KV_PAIR, [])
                 .map(|_| kv_pair[i * size_of::<KVPair>()..].as_ptr().cast());
             if config.is_argmax() {
                 sample.argmax(kv_pair, logits, stream)

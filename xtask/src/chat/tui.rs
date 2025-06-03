@@ -1,6 +1,6 @@
 ﻿use super::app_session::AppSession;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use llama_cu::{Received, Service, SessionId};
+use llama_cu::{Message, Received, Service, SessionId};
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Layout, Rect},
@@ -139,7 +139,7 @@ impl App {
         let s = &self.sessions[&self.current_id()];
         for (i, msg) in s.msgs().iter().enumerate() {
             text.push_str(if i % 2 == 0 { "user> " } else { "assistant> " });
-            text.push_str(&msg);
+            text.push_str(msg);
             text.push('\n')
         }
         if let State::User = self.state() {
@@ -268,7 +268,10 @@ impl App {
     fn send(&mut self) {
         if let Some((session, prompt)) = self.sessions.get_mut(&self.current_id()).unwrap().start()
         {
-            self.service.terminal().start(session, prompt, true);
+            let t = self.service.terminal();
+            let text = t.render(&[Message::user(&prompt)]);
+            let tokens = t.tokenize(&text);
+            t.start(session, &tokens);
         }
     }
 

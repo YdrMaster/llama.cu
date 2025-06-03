@@ -66,8 +66,8 @@ pub struct Session {
 
 pub struct DistKVCache {
     parts: Arc<[Mutex<KVCache>]>,
-    pos: usize,
     len: usize,
+    pub pos: usize,
 }
 
 impl DistKVCache {
@@ -78,8 +78,8 @@ impl DistKVCache {
             .map(|(dev, len)| KVCache::new(template, *len, total, &MemPages::new(*dev)));
         Self {
             parts: parts.map(Mutex::new).collect(),
-            pos: 0,
             len: template.shape()[0],
+            pos: 0,
         }
     }
 }

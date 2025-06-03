@@ -1,5 +1,5 @@
 ﻿use crate::{BaseArgs, macros::print_now};
-use llama_cu::{Received, Service, Session, SessionId, TextBuf};
+use llama_cu::{Message, Received, Service, Session, SessionId, TextBuf};
 use log::info;
 use std::time::{Duration, Instant};
 
@@ -22,7 +22,7 @@ impl GenerateArgs {
         } = self;
         let gpus = base.gpus();
         let max_steps = base.max_steps();
-        let prompt = prompt.unwrap_or("Once upon a time,".into());
+        let mut prompt = prompt.unwrap_or("Once upon a time,".into());
 
         let service = Service::new(base.model, &gpus, !base.no_cuda_graph);
         let session = Session {
@@ -31,7 +31,12 @@ impl GenerateArgs {
             cache: service.terminal().new_cache(),
         };
         print_now!("{prompt}");
-        service.terminal().start(session, prompt, use_template);
+        if use_template {
+            prompt = service.terminal().render(&[Message::user(&prompt)])
+        }
+        service
+            .terminal()
+            .start(session, &service.terminal().tokenize(&prompt));
 
         let mut prefill = Duration::ZERO;
         let mut decode = Duration::ZERO;
