@@ -25,11 +25,12 @@ use std::{
         mpsc::{self, Receiver, Sender, TryRecvError},
     },
 };
-use tokeneer::{Bpe, Tokeneer, utok};
+use tokeneer::{Bpe, Tokeneer};
 
+pub use crate::op::random_sample::SampleArgs;
 pub use exec::{DistKVCache, Session, SessionId};
 pub use model::Message;
-pub use tokeneer::TextBuf;
+pub use tokeneer::{TextBuf, utok};
 
 pub struct Service {
     handle: Option<(Receiver<Output>, std::thread::JoinHandle<()>)>,

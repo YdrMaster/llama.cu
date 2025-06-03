@@ -29,6 +29,14 @@ impl<'a> Message<'a> {
             content: str,
         }
     }
+
+    #[inline]
+    pub const fn system(str: &'a str) -> Self {
+        Self {
+            role: "system",
+            content: str,
+        }
+    }
 }
 
 impl GGufModel<'_> {

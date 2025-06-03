@@ -48,13 +48,22 @@ impl Request {
             prompt,
             out,
         } = self;
-        SessionStub {
-            session,
-            state: State {
-                seq: prompt.len(),
-                out,
-            },
-            prompt: Some(prompt),
+        //TODO 需要修复
+        if false {
+            SessionStub {
+                session,
+                state: State { seq: 0, out },
+                prompt: None,
+            }
+        } else {
+            SessionStub {
+                session,
+                state: State {
+                    seq: prompt.len(),
+                    out,
+                },
+                prompt: Some(prompt),
+            }
         }
     }
 }
