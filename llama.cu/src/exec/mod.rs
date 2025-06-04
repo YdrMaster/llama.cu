@@ -36,7 +36,7 @@ pub(crate) enum Output {
         output: Box<[(SessionId, usize)]>,
         kv_pair: DevMemSpore,
         event: EventSpore,
-        no_decode: Box<[Session]>,
+        finished: Box<[Session]>,
     },
 }
 
@@ -52,6 +52,7 @@ pub(crate) struct Request {
     pub session: Session,
     pub prompt: Box<[utok]>,
     pub out: usize,
+    pub max_steps: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]

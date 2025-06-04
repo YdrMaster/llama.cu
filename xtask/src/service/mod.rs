@@ -25,6 +25,7 @@ use std::{
     path::PathBuf,
     pin::Pin,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use tokio::{
     net::TcpListener,
@@ -85,49 +86,9 @@ async fn start_infer_service(
 
     let _send_handle = tokio::task::spawn_blocking(move || {
         loop {
-            println!("开始接收数据...");
+            let Received { sessions, outputs } = service.recv(Duration::MAX);
 
-            let Received { sessions, outputs } = service.recv();
-
-            println!(
-                "输出数量: {}, 完成会话数量: {}",
-                outputs.len(),
-                sessions.len()
-            );
-
-            // 先处理会话结束
-            //TODO 变为并行版本
-            if !sessions.is_empty() {
-                let mut sessions_guard = service_manager_for_recv.sessions.lock().unwrap();
-                let mut cache_manager_guard =
-                    service_manager_for_recv.cache_manager.lock().unwrap();
-
-                for (session, reason) in sessions {
-                    let session_info = sessions_guard.remove(&session.id).unwrap();
-
-                    let SessionInfo { tokens, .. } = session_info;
-                    // 根据不同的结束原因进行处理
-                    match reason {
-                        ReturnReason::Finish => {
-                            // 正常完成，插回cache
-                            cache_manager_guard.insert(tokens, session.cache);
-                        }
-                        ReturnReason::Overflow => {
-                            cache_manager_guard.insert(tokens, session.cache);
-                            // TODO sender 信息需要发送给前端
-                            todo!()
-                        }
-                        ReturnReason::NoDecode => {
-                            cache_manager_guard.insert(tokens, session.cache);
-                            // TODO sender 信息需要发送给前端
-                            todo!()
-                        }
-                    }
-                }
-            }
-
-            // 处理输出
-            //TODO 变为并行版本
+            // 先处理输出
             for (session_id, tokens) in outputs {
                 let now = std::time::Instant::now();
                 println!(
@@ -151,6 +112,23 @@ async fn start_infer_service(
                     println!("发送失败，接收端已关闭");
                     // 发送失败，可能是接收端已关闭
                     break;
+                }
+            }
+
+            // 处理会话结束
+            if !sessions.is_empty() {
+                let mut sessions_guard = service_manager_for_recv.sessions.lock().unwrap();
+                let mut cache_manager_guard =
+                    service_manager_for_recv.cache_manager.lock().unwrap();
+
+                for (session, reason) in sessions {
+                    let SessionInfo { tokens, .. } = sessions_guard.remove(&session.id).unwrap();
+                    // 根据不同的结束原因进行处理
+                    match reason {
+                        // 正常完成，插回cache
+                        ReturnReason::Finish => cache_manager_guard.insert(tokens, session.cache),
+                        ReturnReason::Overflow => todo!(),
+                    }
                 }
             }
         }
@@ -179,8 +157,6 @@ struct SessionInfo {
     sender: UnboundedSender<String>,
     buf: TextBuf,
     tokens: Vec<utok>,
-    /// 剩余步数
-    remaining_steps: usize,
 }
 
 struct ServiceManager {
@@ -229,7 +205,7 @@ fn complete_chat(
     } = completions;
     let (sender, receiver) = mpsc::unbounded_channel();
 
-    let max_tokens = max_tokens.map_or(service_manager.max_steps, |max_tokens| max_tokens as usize);
+    let max_steps = max_tokens.map_or(service_manager.max_steps, |n| n as usize);
     //TODO 需要从completions中获取
     let sample_args = Default::default();
 
@@ -259,11 +235,12 @@ fn complete_chat(
     let text = service_manager.terminal.render(&messages);
     let tokens = service_manager.terminal.tokenize(&text);
 
-    let (id, tokens) = service_manager
-        .cache_manager
-        .lock()
-        .unwrap()
-        .send(tokens, sample_args);
+    let (id, tokens) =
+        service_manager
+            .cache_manager
+            .lock()
+            .unwrap()
+            .send(tokens, sample_args, max_steps);
 
     assert!(
         service_manager
@@ -276,7 +253,6 @@ fn complete_chat(
                     sender,
                     tokens,
                     buf: TextBuf::new(),
-                    remaining_steps: max_tokens,
                 },
             )
             .is_none()

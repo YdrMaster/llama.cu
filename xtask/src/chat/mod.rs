@@ -1,6 +1,8 @@
 ﻿mod app_session;
 mod tui;
 
+use std::time::Duration;
+
 use crate::{BaseArgs, macros::print_now};
 use llama_cu::{Message, Received, Service, Session, SessionId, TextBuf};
 
@@ -26,7 +28,7 @@ impl ChatArgs {
             simple(service, max_steps)
         } else {
             let terminal = ratatui::init();
-            let result = tui::App::new(service).run(terminal);
+            let result = tui::App::new(service, max_steps).run(terminal);
             ratatui::restore();
             result.unwrap()
         }
@@ -53,13 +55,13 @@ fn simple(service: Service, max_steps: usize) {
             let t = service.terminal();
             let text = t.render(&[Message::user(&line)]);
             let tokens = t.tokenize(&text);
-            t.start(session.take().unwrap(), &tokens);
+            t.start(session.take().unwrap(), &tokens, max_steps);
         }
 
         let mut buf = TextBuf::new();
         print_now!("assistant> ");
         for _ in 0..max_steps {
-            let Received { sessions, outputs } = service.recv();
+            let Received { sessions, outputs } = service.recv(Duration::MAX);
 
             for (_, tokens) in outputs {
                 print_now!("{}", service.terminal().decode(&tokens, &mut buf))

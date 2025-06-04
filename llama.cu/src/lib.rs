@@ -22,8 +22,9 @@ use std::{
     path::Path,
     sync::{
         Arc, OnceLock,
-        mpsc::{self, Receiver, Sender, TryRecvError},
+        mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError},
     },
+    time::{Duration, Instant},
 };
 use tokeneer::{Bpe, Tokeneer};
 
@@ -47,7 +48,6 @@ pub struct Terminal {
 pub enum ReturnReason {
     Finish,
     Overflow,
-    NoDecode,
 }
 
 #[derive(Default)]
@@ -114,25 +114,36 @@ impl Service {
         &self.terminal
     }
 
-    pub fn recv(&self) -> Received {
+    pub fn recv(&self, timeout: Duration) -> Received {
+        let time = Instant::now();
         let mut received = Received::default();
-        match self.handle.as_ref().unwrap().0.recv() {
+        match self.handle.as_ref().unwrap().0.recv_timeout(timeout) {
             Ok(output) => self.handle_output(output, &mut received),
-            Err(_) => unreachable!(),
+            Err(RecvTimeoutError::Timeout) => return received,
+            Err(RecvTimeoutError::Disconnected) => unreachable!(),
         }
+        self.recv_all(timeout.saturating_sub(time.elapsed()), &mut received);
         received
     }
 
     pub fn try_recv(&self) -> Received {
         let mut received = Received::default();
+        self.recv_all(Duration::MAX, &mut received);
+        received
+    }
+
+    fn recv_all(&self, timeout: Duration, received: &mut Received) {
+        let time = Instant::now();
         loop {
             match self.handle.as_ref().unwrap().0.try_recv() {
-                Ok(output) => self.handle_output(output, &mut received),
+                Ok(output) => self.handle_output(output, received),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => unreachable!(),
             }
+            if time.elapsed() >= timeout {
+                break;
+            }
         }
-        received
     }
 
     fn handle_output(&self, output: Output, received: &mut Received) {
@@ -145,7 +156,7 @@ impl Service {
                 output,
                 kv_pair,
                 event,
-                no_decode,
+                finished: no_decode,
             } => {
                 let device = self.terminal.cache_parts[0].0;
                 let mut outputs = device
@@ -159,7 +170,7 @@ impl Service {
                 }
                 received
                     .sessions
-                    .extend(no_decode.into_iter().map(|s| (s, ReturnReason::NoDecode)));
+                    .extend(no_decode.into_iter().map(|s| (s, ReturnReason::Finish)));
                 for (id, mut tokens) in outputs {
                     if let Some((len, _)) = tokens
                         .iter()
@@ -212,12 +223,14 @@ impl Terminal {
         self.components.wait().tokenizer.encode(text)
     }
 
-    pub fn start(&self, session: Session, tokens: &[utok]) -> bool {
+    pub fn start(&self, session: Session, tokens: &[utok], max_steps: usize) -> bool {
+        assert_ne!(max_steps, 0, "Cannot decode 0 step");
         self.sender
             .send(Command::Insert(Request {
                 session,
                 prompt: tokens.to_vec().into(),
                 out: 1,
+                max_steps,
             }))
             .is_ok()
     }

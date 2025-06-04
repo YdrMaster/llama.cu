@@ -18,6 +18,7 @@ use std::{
 
 pub(super) struct App {
     service: Service,
+    max_steps: usize,
     stop: bool,
     focus: Focus,
     current: usize,
@@ -49,11 +50,12 @@ enum State {
 }
 
 impl App {
-    pub fn new(service: Service) -> Self {
+    pub fn new(service: Service, max_steps: usize) -> Self {
         let session = AppSession::new("default", service.terminal().new_cache());
         let default_id = session.id();
         Self {
             service,
+            max_steps,
             stop: false,
             focus: Focus::Main(Instant::now()),
             current: 0,
@@ -271,7 +273,7 @@ impl App {
             let t = self.service.terminal();
             let text = t.render(&[Message::user(&prompt)]);
             let tokens = t.tokenize(&text);
-            t.start(session, &tokens);
+            t.start(session, &tokens, self.max_steps);
         }
     }
 

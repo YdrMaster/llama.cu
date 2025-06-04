@@ -41,7 +41,7 @@ impl BenchArgs {
             };
             service
                 .terminal()
-                .start(session, &service.terminal().tokenize(&prompt));
+                .start(session, &service.terminal().tokenize(&prompt), max_steps);
         }
 
         let mut prefill = Duration::ZERO;
@@ -49,9 +49,9 @@ impl BenchArgs {
         let mut n_toks = 0;
         let mut remain = batch;
         let mut steps = 0;
-        while steps < max_steps {
+        loop {
             let time = Instant::now();
-            let Received { sessions, outputs } = service.recv();
+            let Received { sessions, outputs } = service.recv(Duration::from_millis(50));
             let time = time.elapsed();
             println!("{steps:03}. time = {time:?}");
             steps += 1;

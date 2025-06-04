@@ -36,15 +36,15 @@ impl GenerateArgs {
         }
         service
             .terminal()
-            .start(session, &service.terminal().tokenize(&prompt));
+            .start(session, &service.terminal().tokenize(&prompt), max_steps);
 
         let mut prefill = Duration::ZERO;
         let mut decode = Duration::ZERO;
         let mut steps = 0;
         let mut buf = TextBuf::new();
-        for _ in 0..max_steps {
+        loop {
             let time = Instant::now();
-            let Received { sessions, outputs } = service.recv();
+            let Received { sessions, outputs } = service.recv(Duration::MAX);
             if prefill.is_zero() {
                 prefill = time.elapsed()
             } else {

@@ -19,7 +19,12 @@ impl CacheManager {
         }
     }
 
-    pub fn send(&mut self, tokens: Vec<utok>, sample_args: SampleArgs) -> (SessionId, Vec<utok>) {
+    pub fn send(
+        &mut self,
+        tokens: Vec<utok>,
+        sample_args: SampleArgs,
+        max_steps: usize,
+    ) -> (SessionId, Vec<utok>) {
         static SESSION_ID: AtomicUsize = AtomicUsize::new(0);
         let id = SessionId(SESSION_ID.fetch_add(1, SeqCst));
 
@@ -46,6 +51,7 @@ impl CacheManager {
                 cache,
             },
             &tokens[pos..],
+            max_steps,
         );
         (id, tokens)
     }

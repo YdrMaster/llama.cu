@@ -26,7 +26,7 @@ pub struct Round {
     pub sample: Vec<SampleArgs>,
     pub output: Vec<(SessionId, usize)>,
     pub fast_map: Vec<(usize, usize)>,
-    pub no_decode: Vec<Session>,
+    pub finished: Vec<Session>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -114,9 +114,15 @@ impl EngineManager {
                 ans.fast_map.push((pre_output[&id], ans.tokens.len()));
                 ans.tokens.push(0)
             }
-            // 回填
-            assert!(self.sess.insert(id, stub).is_none());
-            assert!(self.pre_output.insert(id, out_idx).is_none());
+            stub.state.remain_steps -= 1;
+            if stub.state.remain_steps == 0 {
+                // 生成结束
+                ans.finished.push(stub.session)
+            } else {
+                // 回填
+                assert!(self.sess.insert(id, stub).is_none());
+                assert!(self.pre_output.insert(id, out_idx).is_none());
+            }
             out_idx += out
         }
         ans

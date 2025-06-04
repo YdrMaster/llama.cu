@@ -39,6 +39,7 @@ pub(super) struct SessionStub {
 pub(super) struct State {
     pub seq: usize,
     pub out: usize,
+    pub remain_steps: usize,
 }
 
 impl Request {
@@ -47,12 +48,14 @@ impl Request {
             session,
             prompt,
             out,
+            max_steps,
         } = self;
         SessionStub {
             session,
             state: State {
                 seq: prompt.len(),
                 out,
+                remain_steps: max_steps,
             },
             prompt: Some(prompt),
         }
@@ -209,7 +212,7 @@ impl Worker<'_> {
                         sample,
                         output,
                         fast_map,
-                        no_decode,
+                        finished,
                     } = manager.prepare();
                     if !overflow.is_empty()
                         && outputs.send(Output::Overflow(overflow.into())).is_err()
@@ -240,7 +243,7 @@ impl Worker<'_> {
                         output: output.into(),
                         kv_pair: kv_pairs.sporulate(),
                         event: stream.record().sporulate(),
-                        no_decode: no_decode.into(),
+                        finished: finished.into(),
                     };
                     if outputs.send(output).is_err() {
                         break;
