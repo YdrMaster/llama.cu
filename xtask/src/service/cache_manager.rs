@@ -1,5 +1,10 @@
 use llama_cu::{DistKVCache, SampleArgs, Session, SessionId, Terminal, utok};
-use std::{collections::BTreeMap, iter::zip, time::Instant};
+use std::{
+    collections::BTreeMap,
+    iter::zip,
+    sync::atomic::{AtomicUsize, Ordering::SeqCst},
+    time::Instant,
+};
 
 pub(crate) struct CacheManager {
     terminal: Terminal,
@@ -14,12 +19,10 @@ impl CacheManager {
         }
     }
 
-    pub fn send(
-        &mut self,
-        id: SessionId,
-        tokens: Vec<utok>,
-        sample_args: SampleArgs,
-    ) -> (SessionId, Vec<utok>) {
+    pub fn send(&mut self, tokens: Vec<utok>, sample_args: SampleArgs) -> (SessionId, Vec<utok>) {
+        static SESSION_ID: AtomicUsize = AtomicUsize::new(0);
+        let id = SessionId(SESSION_ID.fetch_add(1, SeqCst));
+
         let best_cache = self
             .caches
             .iter()
@@ -47,7 +50,11 @@ impl CacheManager {
     }
 
     pub fn insert(&mut self, tokens: Vec<utok>, cache: DistKVCache) {
-        self.caches.insert(Instant::now(), (tokens, cache));
+        assert!(
+            self.caches
+                .insert(Instant::now(), (tokens, cache))
+                .is_none()
+        )
     }
 }
 

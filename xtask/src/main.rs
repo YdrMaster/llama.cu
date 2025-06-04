@@ -2,7 +2,7 @@ mod bench;
 mod chat;
 mod generate;
 mod logger;
-mod service_;
+mod service;
 
 use clap::Parser;
 use regex::Regex;
