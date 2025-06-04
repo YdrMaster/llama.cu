@@ -13,7 +13,9 @@ use hyper::{
     service::Service as HyperService,
 };
 use hyper_util::rt::TokioIo;
-use llama_cu::{Message, Received, ReturnReason, Service, SessionId, Terminal, TextBuf, utok};
+use llama_cu::{
+    Message, Received, ReturnReason, SampleArgs, Service, SessionId, Terminal, TextBuf, utok,
+};
 use log::{info, warn};
 use openai_struct::{ChatCompletionRequestMessage, CreateChatCompletionRequest};
 use response::{error, text_stream};
@@ -90,13 +92,6 @@ async fn start_infer_service(
 
             // 先处理输出
             for (session_id, tokens) in outputs {
-                let now = std::time::Instant::now();
-                println!(
-                    "处理会话 {:?} 的输出，tokens长度: {} - 时间: {:?}",
-                    session_id,
-                    tokens.len(),
-                    now
-                );
                 let mut sessions_guard = service_manager_for_recv.sessions.lock().unwrap();
                 let session_info = sessions_guard.get_mut(&session_id).unwrap();
                 // 更新session_info
@@ -105,13 +100,10 @@ async fn start_infer_service(
                 let text = service_manager_for_recv
                     .terminal
                     .decode(&tokens, &mut session_info.buf);
-                info!("发送文本: {}", text);
-                println!("解码文本: '{}' - 时间: {:?}", text, now);
+                info!("发送文本: {text:?}");
 
-                if session_info.sender.send(text.to_string()).is_err() {
-                    println!("发送失败，接收端已关闭");
-                    // 发送失败，可能是接收端已关闭
-                    break;
+                if session_info.sender.send(text).is_err() {
+                    todo!("客户端关闭")
                 }
             }
 
@@ -201,13 +193,15 @@ fn complete_chat(
     let CreateChatCompletionRequest {
         messages,
         max_tokens,
+        temperature,
+        top_p,
         ..
     } = completions;
     let (sender, receiver) = mpsc::unbounded_channel();
 
     let max_steps = max_tokens.map_or(service_manager.max_steps, |n| n as usize);
-    //TODO 需要从completions中获取
-    let sample_args = Default::default();
+    let sample_args =
+        SampleArgs::new(temperature.unwrap_or(0.), top_p.unwrap_or(1.), usize::MAX).unwrap();
 
     info!("completions: {messages:#?}");
 
@@ -261,147 +255,119 @@ fn complete_chat(
     text_stream(UnboundedReceiverStream::new(receiver))
 }
 
-#[cfg(test)]
-mod test {
-    use super::{V1_CHAT_COMPLETIONS, start_infer_service};
+#[test]
+fn test_post_send() {
     use log::{info, trace};
     use openai_struct::{
         ChatCompletionRequestMessage, CreateChatCompletionRequest, ModelIdsShared,
     };
     use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
+    use std::time::Instant;
     use tokio::time::Duration;
     use tokio_stream::StreamExt;
 
     const PORT: u16 = 24526;
 
-    //TODO 目前是分开的形式
-    #[test]
-    fn test_post() {
-        crate::logger::init();
+    crate::logger::init();
 
-        let Some(path) = std::env::var_os("TEST_MODEL") else {
-            println!("TEST_MODE not set");
-            return;
-        };
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(async move {
+            let client = reqwest::Client::new();
 
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async move {
-                let _handle = tokio::spawn(start_infer_service(
-                    path.into(),
-                    PORT,
-                    [0].into(),
-                    256,
-                    false,
-                ));
+            info!(
+                "Runtime workers = {}",
+                tokio::runtime::Handle::current().metrics().num_workers()
+            );
 
-                _handle.await.unwrap().unwrap();
+            let mut headers: HeaderMap = HeaderMap::new();
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+            let req_body = serde_json::to_string(&CreateChatCompletionRequest {
+                model: ModelIdsShared {},
+                messages: vec![ChatCompletionRequestMessage::User(
+                    openai_struct::ChatCompletionRequestUserMessage {
+                        content: serde_json::Value::String("Tell a story".into()),
+                        name: None,
+                    },
+                )],
+                metadata: None,
+                service_tier: None,
+                audio: None,
+                function_call: None,
+                functions: None,
+                max_completion_tokens: None,
+                max_tokens: Some(256),
+                modalities: None,
+                n: None,
+                parallel_tool_calls: None,
+                prediction: None,
+                reasoning_effort: None,
+                response_format: None,
+                store: None,
+                tool_choice: None,
+                tools: None,
+                top_logprobs: None,
+                web_search_options: None,
+                frequency_penalty: None,
+                logit_bias: None,
+                logprobs: None,
+                presence_penalty: None,
+                seed: None,
+                stop: None,
+                stream: Some(true),
+                stream_options: None,
+                temperature: None,
+                top_p: None,
+                user: None,
             })
-    }
+            .unwrap();
 
-    #[test]
-    fn test_post_send() {
-        crate::logger::init();
+            let req = client
+                .post(format!("http://localhost:{PORT}{V1_CHAT_COMPLETIONS}"))
+                .headers(headers)
+                .body(req_body)
+                .timeout(Duration::from_secs(100));
 
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(async move {
-                let client = reqwest::Client::new();
+            trace!("send req");
+            let res = req.send().await.unwrap();
+            info!("res: status={}, header={:#?}", res.status(), res.headers());
 
-                info!(
-                    "Runtime workers = {}",
-                    tokio::runtime::Handle::current().metrics().num_workers()
-                );
+            if res.status().is_success() {
+                trace!("开始读取流式响应...");
 
-                let mut headers: HeaderMap = HeaderMap::new();
-                headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+                // 方法2: 使用流式读取 (正确的SSE处理方式)
+                let mut stream = res.bytes_stream();
+                let mut chunk_count = 0;
+                let mut total_text = String::new();
 
-                let req_body = serde_json::to_string(&CreateChatCompletionRequest {
-                    model: ModelIdsShared {},
-                    messages: vec![ChatCompletionRequestMessage::User(
-                        openai_struct::ChatCompletionRequestUserMessage {
-                            content: serde_json::Value::String("Tell a story".into()),
-                            name: None,
-                        },
-                    )],
-                    metadata: None,
-                    service_tier: None,
-                    audio: None,
-                    function_call: None,
-                    functions: None,
-                    max_completion_tokens: None,
-                    max_tokens: Some(256),
-                    modalities: None,
-                    n: None,
-                    parallel_tool_calls: None,
-                    prediction: None,
-                    reasoning_effort: None,
-                    response_format: None,
-                    store: None,
-                    tool_choice: None,
-                    tools: None,
-                    top_logprobs: None,
-                    web_search_options: None,
-                    frequency_penalty: None,
-                    logit_bias: None,
-                    logprobs: None,
-                    presence_penalty: None,
-                    seed: None,
-                    stop: None,
-                    stream: Some(true),
-                    stream_options: None,
-                    temperature: None,
-                    top_p: None,
-                    user: None,
-                })
-                .unwrap();
+                while let Some(item) = stream.next().await {
+                    chunk_count += 1;
+                    let now = Instant::now();
+                    trace!("收到第 {chunk_count} 个数据块 - 时间: {now:?}");
+                    let bytes = item.unwrap();
+                    let text = std::str::from_utf8(&bytes).unwrap();
+                    trace!("原始数据: {text:?}");
 
-                let req = client
-                    .post(format!("http://localhost:{PORT}{V1_CHAT_COMPLETIONS}"))
-                    .headers(headers)
-                    .body(req_body)
-                    .timeout(Duration::from_secs(100));
-
-                trace!("send req");
-                let res = req.send().await.unwrap();
-                info!("res: status={}, header={:#?}", res.status(), res.headers());
-
-                if res.status().is_success() {
-                    println!("开始读取流式响应...");
-
-                    // 方法2: 使用流式读取 (正确的SSE处理方式)
-                    let mut stream = res.bytes_stream();
-                    let mut chunk_count = 0;
-                    let mut total_text = String::new();
-
-                    while let Some(item) = stream.next().await {
-                        chunk_count += 1;
-                        let now = std::time::Instant::now();
-                        println!("收到第 {} 个数据块 - 时间: {:?}", chunk_count, now);
-                        let bytes = item.unwrap();
-                        let text = std::str::from_utf8(&bytes).unwrap();
-                        println!("原始数据: {:?}", text);
-
-                        // 解析SSE格式
-                        for line in text.lines() {
-                            if line.starts_with("data: ") {
-                                let content = &line[6..];
-                                println!("SSE数据: '{}'", content);
-                                total_text.push_str(content);
-                            } else if !line.is_empty() {
-                                println!("非SSE行: {}", line);
-                            }
+                    // 解析 SSE 格式
+                    for line in text.lines() {
+                        if let Some(line) = line.strip_prefix("data: ") {
+                            total_text.push_str(line);
+                            trace!("SSE 行: `{line}`")
+                        } else if !line.is_empty() {
+                            total_text.push_str(line);
+                            trace!("非 SSE 行: `{line}`")
                         }
                     }
-
-                    println!("流式响应结束，共收到 {} 个数据块", chunk_count);
-                    println!("完整文本: '{}'", total_text);
-                } else {
-                    println!("{res:?}");
-                    let text = res.bytes().await.unwrap();
-                    let text = std::str::from_utf8(&text).unwrap();
-                    println!("body: {text}")
                 }
-            })
-    }
+
+                println!("流式响应结束，共收到 {chunk_count} 个数据块");
+                println!("完整文本: {total_text}");
+            } else {
+                println!("{res:?}");
+                let text = res.bytes().await.unwrap();
+                let text = std::str::from_utf8(&text).unwrap();
+                println!("body: {text}")
+            }
+        })
 }

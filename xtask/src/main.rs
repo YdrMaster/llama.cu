@@ -17,7 +17,7 @@ fn main() {
     match Cli::parse().command {
         Generate(args) => args.generate(),
         Chat(args) => args.chat(),
-        // Service(args) => args.service(),
+        Service(args) => args.service(),
         Bench(args) => args.bench(),
     }
 }
@@ -36,8 +36,8 @@ enum Commands {
     Generate(generate::GenerateArgs),
     /// chat in console
     Chat(chat::ChatArgs),
-    // /// web service
-    // Service(ServiceArgs),
+    /// web service
+    Service(service::ServiceArgs),
     /// batched benchmark
     Bench(bench::BenchArgs),
 }

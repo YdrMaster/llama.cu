@@ -30,7 +30,7 @@ impl BenchArgs {
 
         let service = Service::new(base.model, &gpus, !base.no_cuda_graph);
         if use_template {
-            prompt = service.terminal().render(&[Message::user(&prompt)]).into()
+            prompt = service.terminal().render(&[Message::user(&prompt)])
         }
 
         for i in 0..batch {

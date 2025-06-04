@@ -219,7 +219,7 @@ impl Terminal {
             .unwrap()
     }
 
-    pub fn tokenize<'s>(&self, text: &'s str) -> Vec<utok> {
+    pub fn tokenize(&self, text: &str) -> Vec<utok> {
         self.components.wait().tokenizer.encode(text)
     }
 
