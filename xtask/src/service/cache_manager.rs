@@ -23,10 +23,11 @@ impl CacheManager {
         static SESSION_ID: AtomicUsize = AtomicUsize::new(0);
         let id = SessionId(SESSION_ID.fetch_add(1, SeqCst));
 
+        let use_cache = &tokens[..tokens.len() - 1];
         let best_cache = self
             .caches
             .iter()
-            .map(|(key, (history, _))| (*key, common_len(history, &tokens)))
+            .map(|(key, (history, _))| (*key, common_len(history, use_cache)))
             .max_by_key(|&(_, len)| len);
 
         let cache = match best_cache {

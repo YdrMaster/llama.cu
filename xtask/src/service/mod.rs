@@ -24,10 +24,7 @@ use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
     path::PathBuf,
     pin::Pin,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering::SeqCst},
-    },
+    sync::{Arc, Mutex},
 };
 use tokio::{
     net::TcpListener,
