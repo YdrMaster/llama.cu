@@ -1,14 +1,11 @@
 #include "export.h"
 #include "sample.cuh"
-// #include "sample.h"
 
 __C __export cudaError calculate_workspace_size_half(
     size_t *argmax,
     size_t *random_sample,
     size_t n) {
-    {
-        return calculate_workspace_size<half>(argmax, random_sample, n);
-    }
+    return calculate_workspace_size<half>(argmax, random_sample, n);
 }
 
 __C __export cudaError argmax_half(
@@ -19,16 +16,14 @@ __C __export cudaError argmax_half(
     void *workspace_ptr,
     size_t workspace_len,
     cudaStream_t stream) {
-    {
-        return arg_max(
-            kv_pair,
-            logits,
-            n,
+    return arg_max(
+        kv_pair,
+        logits,
+        n,
 
-            workspace_ptr,
-            workspace_len,
-            stream);
-    }
+        workspace_ptr,
+        workspace_len,
+        stream);
 }
 
 __C __export cudaError sample_half(
@@ -43,20 +38,18 @@ __C __export cudaError sample_half(
     void *workspace_ptr,
     size_t workspace_len,
     cudaStream_t stream) {
-    {
-        return random_sample(
-            kv_pair,
-            logits,
-            indices,
-            n,
+    return random_sample(
+        kv_pair,
+        logits,
+        indices,
+        n,
 
-            random,
-            temperature,
-            topp,
-            topk,
+        random,
+        temperature,
+        topp,
+        topk,
 
-            workspace_ptr,
-            workspace_len,
-            stream);
-    }
+        workspace_ptr,
+        workspace_len,
+        stream);
 }

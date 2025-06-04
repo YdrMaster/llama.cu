@@ -29,7 +29,7 @@ impl<'ctx> OutputHead<'ctx> {
             NormType::LayerNorm { .. } => todo!(),
         };
 
-        dims!([_, n] = weight);
+        dims!([nvoc, _] = weight);
 
         let stream = ctx.stream();
         let mut loader = WeightLoader::new([]);
@@ -46,7 +46,7 @@ impl<'ctx> OutputHead<'ctx> {
             norm: load(norm),
             linear: load(weight),
             epsilon: Some(epsilon.into()),
-            sample: RandomSample::new(n, ctx),
+            sample: RandomSample::new(nvoc, ctx),
         }
     }
 }
