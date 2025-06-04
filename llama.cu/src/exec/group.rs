@@ -133,7 +133,7 @@ impl<'ctx> ModelGroup<'ctx> {
         let reqs = reqs
             .iter_mut()
             .map(|req| {
-                req.kv_cache.update(req.pos, req.pos + req.seq, pages);
+                req.kv_cache.update(req.pos + req.seq, pages);
                 Req {
                     kv_cache: req.kv_cache.as_tensor(),
                     pos: req.pos,
