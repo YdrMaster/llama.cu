@@ -1,8 +1,9 @@
 ﻿mod cache_manager;
 mod error;
+mod openai;
 mod response;
 
-use crate::BaseArgs;
+use crate::{BaseArgs, service::openai::create_chat_completion_response};
 use cache_manager::CacheManager;
 use error::*;
 use http_body_util::{BodyExt, combinators::BoxBody};
@@ -16,8 +17,10 @@ use hyper_util::rt::TokioIo;
 use llama_cu::{
     Message, Received, ReturnReason, SampleArgs, Service, SessionId, Terminal, TextBuf, utok,
 };
-use log::{info, warn};
-use openai_struct::{ChatCompletionRequestMessage, CreateChatCompletionRequest};
+use log::{debug, info, warn};
+use openai::V1_CHAT_COMPLETIONS;
+use openai_struct::{ChatCompletionRequestMessage, CreateChatCompletionRequest, FinishReason};
+
 use response::{error, text_stream};
 use std::{
     collections::BTreeMap,
@@ -27,7 +30,7 @@ use std::{
     path::PathBuf,
     pin::Pin,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     net::TcpListener,
@@ -35,7 +38,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
-const V1_CHAT_COMPLETIONS: &str = "/v1/chat/completions";
+const MODEL_NAME: &str = "llama";
 
 #[derive(Args)]
 pub struct ServiceArgs {
@@ -100,10 +103,27 @@ async fn start_infer_service(
                 let text = service_manager_for_recv
                     .terminal
                     .decode(&tokens, &mut session_info.buf);
-                info!("发送文本: {text:?}");
+                debug!("发送文本: {text:?}");
 
-                if session_info.sender.send(text).is_err() {
-                    todo!("客户端关闭")
+                //TODO session_id 需要更严谨的格式
+                let response = create_chat_completion_response(
+                    session_id,
+                    session_info.created as i32,
+                    MODEL_NAME.to_string(),
+                    text,
+                    None,
+                );
+
+                if session_info
+                    .sender
+                    .send(serde_json::to_string(&response).unwrap())
+                    .is_err()
+                {
+                    // TODO 可能应该直接丢弃session_info，但会引起session 管理混乱
+                    // let _ = sessions_guard.remove(&session_id).unwrap();
+                    service_manager_for_recv.terminal.stop(session_id);
+
+                    info!("{:?} 客户端连接已关闭", session_id);
                 }
             }
 
@@ -114,12 +134,46 @@ async fn start_infer_service(
                     service_manager_for_recv.cache_manager.lock().unwrap();
 
                 for (session, reason) in sessions {
-                    let SessionInfo { tokens, .. } = sessions_guard.remove(&session.id).unwrap();
+                    let SessionInfo {
+                        tokens,
+                        sender,
+                        created,
+                        ..
+                    } = sessions_guard.remove(&session.id).unwrap();
                     // 根据不同的结束原因进行处理
                     match reason {
                         // 正常完成，插回cache
-                        ReturnReason::Finish => cache_manager_guard.insert(tokens, session.cache),
-                        ReturnReason::Overflow => todo!(),
+                        ReturnReason::Finish => {
+                            cache_manager_guard.insert(tokens, session.cache);
+                            info!("{:?} 正常完成", session.id);
+                            let response = create_chat_completion_response(
+                                session.id,
+                                created as i32,
+                                MODEL_NAME.to_string(),
+                                String::new(),
+                                Some(FinishReason::Stop),
+                            );
+                            sender
+                                .send(serde_json::to_string(&response).unwrap())
+                                .unwrap_or_else(|_| {
+                                    info!("{:?} 发送正常完成失败", session.id);
+                                });
+                        }
+                        ReturnReason::Overflow => {
+                            info!("{:?} 超长完成", session.id);
+                            let response = create_chat_completion_response(
+                                session.id,
+                                created as i32,
+                                MODEL_NAME.to_string(),
+                                String::new(),
+                                Some(FinishReason::Length),
+                            );
+                            sender
+                                .send(serde_json::to_string(&response).unwrap())
+                                .unwrap_or_else(|_| {
+                                    info!("{:?} 发送超长完成失败", session.id);
+                                });
+                        }
                     }
                 }
             }
@@ -149,6 +203,7 @@ struct SessionInfo {
     sender: UnboundedSender<String>,
     buf: TextBuf,
     tokens: Vec<utok>,
+    created: u64,
 }
 
 struct ServiceManager {
@@ -247,6 +302,10 @@ fn complete_chat(
                     sender,
                     tokens,
                     buf: TextBuf::new(),
+                    created: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs(),
                 },
             )
             .is_none()
@@ -259,7 +318,7 @@ fn complete_chat(
 mod test {
     use super::*;
     use log::{info, trace, warn};
-    use openai_struct::ModelIdsShared;
+    use openai_struct::{CreateChatCompletionResponse, ModelIdsShared};
     use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
     use std::time::Instant;
     use tokio::time::Duration;
@@ -322,7 +381,7 @@ mod test {
         headers: &HeaderMap,
         req_body: String,
         index: Option<usize>,
-    ) -> Result<(usize, usize, usize, Duration), String> {
+    ) -> Result<(usize, usize, String, Duration), String> {
         let task_start = Instant::now();
         let index = index.unwrap_or(0);
 
@@ -359,13 +418,15 @@ mod test {
 
                     let mut stream = res.bytes_stream();
                     let mut chunk_count = 0;
-                    let mut total_text = String::new();
+                    let mut accumulated_content = String::new();
+                    let mut buffer = String::new();
 
                     while let Some(item) = stream.next().await {
                         chunk_count += 1;
                         match item {
                             Ok(bytes) => {
                                 let text = std::str::from_utf8(&bytes).unwrap_or("<invalid utf8>");
+                                buffer.push_str(text);
 
                                 if index > 0 {
                                     trace!(
@@ -378,17 +439,48 @@ mod test {
                                     trace!("原始数据: {:?}", text);
                                 }
 
-                                // 解析 SSE 格式
-                                for line in text.lines() {
-                                    if let Some(line) = line.strip_prefix("data: ") {
-                                        total_text.push_str(line);
-                                        if index == 0 {
-                                            trace!("SSE 行: `{}`", line);
-                                        }
-                                    } else if !line.is_empty() {
-                                        total_text.push_str(line);
-                                        if index == 0 {
-                                            trace!("非 SSE 行: `{}`", line);
+                                // 处理可能跨越多个数据块的SSE消息
+                                while let Some(end_pos) = buffer.find("\n\n") {
+                                    let sse_chunk = buffer[..end_pos].to_string();
+                                    buffer.drain(..end_pos + 2);
+
+                                    // 解析 SSE 格式，以 data: 为准
+                                    for line in sse_chunk.lines() {
+                                        if let Some(data_line) = line.strip_prefix("data: ") {
+                                            // 尝试解析为CreateChatCompletionResponse
+                                            match serde_json::from_str::<CreateChatCompletionResponse>(
+                                                data_line,
+                                            ) {
+                                                Ok(response) => {
+                                                    if index == 0 {
+                                                        trace!("解析响应: {:?}", response);
+                                                    }
+
+                                                    // 提取choices数组中的content
+                                                    for choice in &response.choices {
+                                                        let content = &choice.message.content;
+                                                        if !content.is_empty() {
+                                                            accumulated_content.push_str(content);
+                                                            if index == 0 {
+                                                                trace!(
+                                                                    "提取到文本内容: {:?}",
+                                                                    content
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    if index == 0 {
+                                                        trace!(
+                                                            "响应解析失败: {} - 原始数据: {:?}",
+                                                            e, data_line
+                                                        );
+                                                    }
+                                                    // 如果不是有效的响应格式，可能是纯文本内容
+                                                    accumulated_content.push_str(data_line);
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -402,18 +494,23 @@ mod test {
 
                     if index > 0 {
                         info!(
-                            "任务 {} 完成 - 总耗时: {:?}, 数据块数: {}, 文本长度: {}",
+                            "任务 {} 完成 - 总耗时: {:?}, 数据块数: {}, 内容长度: {}",
                             index,
                             task_start.elapsed(),
                             chunk_count,
-                            total_text.len()
+                            accumulated_content.len()
                         );
                     } else {
                         println!("流式响应结束，共收到 {} 个数据块", chunk_count);
-                        println!("完整文本: {}", total_text);
+                        println!("完整生成内容: {}", accumulated_content);
                     }
 
-                    Ok((index, chunk_count, total_text.len(), task_start.elapsed()))
+                    Ok((
+                        index,
+                        chunk_count,
+                        accumulated_content,
+                        task_start.elapsed(),
+                    ))
                 } else {
                     let error_text = res.text().await.unwrap_or_default();
                     if index > 0 {
@@ -504,10 +601,10 @@ mod test {
 
                 for task in tasks {
                     match task.await {
-                        Ok(Ok((index, chunks, text_len, duration))) => {
+                        Ok(Ok((index, chunks, content, duration))) => {
                             successful_count += 1;
                             total_chunks += chunks;
-                            total_text_length += text_len;
+                            total_text_length += content.len();
                             max_duration = max_duration.max(duration);
                             min_duration = min_duration.min(duration);
                             trace!("任务 {} 成功完成", index);
