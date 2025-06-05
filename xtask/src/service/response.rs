@@ -5,7 +5,10 @@ use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
 use hyper::{
     Response, StatusCode,
     body::{Bytes, Frame},
-    header::{CACHE_CONTROL, CONNECTION, CONTENT_TYPE},
+    header::{
+        ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS, ACCESS_CONTROL_ALLOW_ORIGIN,
+        CACHE_CONTROL, CONNECTION, CONTENT_TYPE,
+    },
 };
 use tokio_stream::{Stream, StreamExt};
 
@@ -17,6 +20,9 @@ pub fn text_stream(
         .header(CONTENT_TYPE, "text/event-stream")
         .header(CACHE_CONTROL, "no-cache")
         .header(CONNECTION, "keep-alive")
+        .header(ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .header(ACCESS_CONTROL_ALLOW_METHODS, "GET,POST")
+        .header(ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type")
         .body(StreamBody::new(s.map(|s| Ok(Frame::data(format!("data: {s}\n\n").into())))).boxed())
         .unwrap()
 }
@@ -25,6 +31,9 @@ pub fn error(e: Error) -> Response<BoxBody<Bytes, hyper::Error>> {
     Response::builder()
         .status(e.status())
         .header(CONTENT_TYPE, "application/json")
+        .header(ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .header(ACCESS_CONTROL_ALLOW_METHODS, "GET,POST")
+        .header(ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type")
         .body(full(e.body()))
         .unwrap()
 }

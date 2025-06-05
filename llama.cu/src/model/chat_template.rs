@@ -15,7 +15,7 @@ pub(crate) struct ChatTemplate {
     eos: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct Message<'a> {
     pub role: &'a str,
     pub content: &'a str,
@@ -34,6 +34,14 @@ impl<'a> Message<'a> {
     pub const fn system(str: &'a str) -> Self {
         Self {
             role: "system",
+            content: str,
+        }
+    }
+
+    #[inline]
+    pub const fn assistant(str: &'a str) -> Self {
+        Self {
+            role: "assistant",
             content: str,
         }
     }
