@@ -1,7 +1,14 @@
 #include <cub/device/device_radix_sort.cuh>
 #include <cub/device/device_reduce.cuh>
 #include <cub/device/device_scan.cuh>
+#ifndef __MACA_ARCH__
 #include <cuda_fp16.h>
+#else
+typedef hcError_t cudaError;
+typedef hcStream_t cudaStream_t;
+#define cudaSuccess hcSuccess
+#define cudaGetLastError hcGetLastError
+#endif
 
 template <class T>
 cudaError arg_max_(
@@ -83,7 +90,6 @@ __global__ void random_sample_kernel(
     {                                                                                           \
         auto error = (statement);                                                               \
         if (error != cudaSuccess) {                                                             \
-            printf("Error: %s (%d) at \"%s\"\n", cudaGetErrorString(error), error, #statement); \
             return error;                                                                       \
         }                                                                                       \
     }

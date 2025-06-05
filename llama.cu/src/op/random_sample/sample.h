@@ -3,8 +3,14 @@
 
 #include "export.h"
 
-#include <cuda_fp16.h>
+#ifndef __MACA_ARCH__
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
+#else
+#include <hcr/hc_runtime.h>
+typedef hcStream_t cudaStream_t;
+typedef hcError_t cudaError_t;
+#endif
 
 __C __export cudaError_t calculate_workspace_size_half(
     size_t *argmax,

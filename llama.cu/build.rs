@@ -1,15 +1,47 @@
 ﻿use build_script_cfg::Cfg;
 use search_cuda_tools::{find_cuda_root, find_nccl_root};
-use std::{env, path::PathBuf, process::Command};
+use search_maca_tools::find_maca_root;
+use std::{
+    env,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 fn main() {
-    let Some(cuda_root) = find_cuda_root() else {
-        panic!("cuda not found, check $CUDA_ROOT env var")
-    };
     let nccl = Cfg::new("nccl");
-    if find_nccl_root().is_some() {
-        nccl.define()
+    if let Some(maca_root) = find_maca_root() {
+        nccl.define();
+        compile_bind(
+            maca_root,
+            "sample.maca",
+            "htgpu_llvm/bin/htcc",
+            ["-x", "hpcc", "-fPIC"],
+            Some("__MACA_ARCH__"),
+        )
+    } else if let Some(cuda_root) = find_cuda_root() {
+        if find_nccl_root().is_some() {
+            nccl.define()
+        }
+        compile_bind(
+            cuda_root,
+            "sample.cu",
+            "bin/nvcc",
+            ["-Xcompiler", "-fPIC"],
+            None,
+        )
+    } else {
+        panic!("cuda not found, check $CUDA_ROOT env var")
     }
+}
+
+fn compile_bind(
+    toolkit: impl AsRef<Path>,
+    src: &str,
+    compiler: &str,
+    compiler_args: impl IntoIterator<Item = &'static str>,
+    define: Option<&str>,
+) {
+    let toolkit = toolkit.as_ref();
 
     let out_dir = PathBuf::from(&env::var_os("OUT_DIR").unwrap());
     let proj_dir = PathBuf::from(&env::var_os("CARGO_MANIFEST_DIR").unwrap());
@@ -17,28 +49,32 @@ fn main() {
     let src_dir = proj_dir.join("src/op/random_sample");
     let lib_name = "random_sample";
     let header = src_dir.join("sample.h");
-    let source = src_dir.join("sample.cu");
+    let source = src_dir.join(src);
 
-    let status = Command::new(cuda_root.join("bin/nvcc"))
-        .arg(source)
-        .args(["-Xcompiler", "-fPIC"])
+    let status = Command::new(toolkit.join(compiler))
+        .args(compiler_args)
         .arg("-shared")
+        .arg(source)
         .arg("-o")
         .arg(out_dir.join(format!("lib{lib_name}.so")))
         .status()
-        .expect("nvcc command failed");
+        .expect("compiler executable error");
 
     if !status.success() {
-        panic!("nvcc compile failed")
+        panic!("compile error")
     }
 
     println!("cargo:rustc-link-search={}", out_dir.display());
     println!("cargo:rustc-link-lib={lib_name}");
 
-    bindgen::Builder::default()
+    let mut builder = bindgen::Builder::default();
+    if let Some(define) = define {
+        builder = builder.clang_arg(format!("-D{define}"))
+    }
+    builder
         .header(header.display().to_string())
         .clang_arg(format!("-I{}", src_dir.display()))
-        .clang_arg(format!("-I{}", cuda_root.join("include").display()))
+        .clang_arg(format!("-I{}", toolkit.join("include").display()))
         .allowlist_function("calculate_workspace_size_half")
         .allowlist_function("argmax_half")
         .allowlist_function("sample_half")
