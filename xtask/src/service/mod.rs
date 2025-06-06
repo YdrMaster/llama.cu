@@ -253,9 +253,9 @@ fn complete_chat(
     debug!("received completions: {messages:#?}");
 
     // 用于持有所有权
-    let content_list = messages
-        .iter()
-        .map(|message| match message {
+    let mut content_list = Vec::with_capacity(messages.len());
+    for msg in &messages {
+        let msg = match msg {
             ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
                 content: Value::String(msg),
                 ..
@@ -268,10 +268,10 @@ fn complete_chat(
                 content: Some(Value::String(msg)),
                 ..
             }) => msg,
-            msg => todo!("{msg:?}"),
-        })
-        .cloned()
-        .collect::<Vec<_>>();
+            msg => return error(Error::msg_not_supported(msg)),
+        };
+        content_list.push(msg)
+    }
 
     let messages = messages
         .iter()

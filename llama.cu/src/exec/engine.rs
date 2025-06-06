@@ -219,6 +219,16 @@ impl Worker<'_> {
                     {
                         break;
                     }
+                    if tokens.is_empty() {
+                        assert!(
+                            reqs.is_empty()
+                                && sample.is_empty()
+                                && output.is_empty()
+                                && fast_map.is_empty()
+                                && finished.is_empty()
+                        );
+                        continue;
+                    }
                     let out_idx = out_idx(&reqs, output.iter().map(|(_, len)| *len), ctx);
                     // 加载输入
                     let (key, tok) = models.load_toks(&tokens, &loading);
