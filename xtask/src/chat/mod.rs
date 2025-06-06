@@ -35,7 +35,7 @@ impl ChatArgs {
     }
 }
 
-fn simple(service: Service, max_steps: usize) {
+fn simple(mut service: Service, max_steps: usize) {
     let mut session = Some(Session {
         id: SessionId(0),
         sample_args: Default::default(),

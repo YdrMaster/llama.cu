@@ -24,7 +24,7 @@ impl GenerateArgs {
         let max_steps = base.max_steps();
         let mut prompt = prompt.unwrap_or("Once upon a time,".into());
 
-        let service = Service::new(base.model, &gpus, !base.no_cuda_graph);
+        let mut service = Service::new(base.model, &gpus, !base.no_cuda_graph);
         let session = Session {
             id: SessionId(0),
             sample_args: Default::default(),

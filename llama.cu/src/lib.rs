@@ -17,7 +17,7 @@ use log::info;
 use nn::Tensor;
 use operators::cuda::{self, Device};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     ffi::c_int,
     path::Path,
     sync::{
@@ -36,6 +36,7 @@ pub use tokeneer::{TextBuf, utok};
 pub struct Service {
     handle: Option<(Receiver<Output>, std::thread::JoinHandle<()>)>,
     terminal: Terminal,
+    forbid: HashSet<SessionId>,
 }
 
 #[derive(Clone)]
@@ -107,6 +108,7 @@ impl Service {
                 cache_parts: gpus.iter().map(|&i| (Device::new(i), 1)).collect(),
                 components: once,
             },
+            forbid: Default::default(),
         }
     }
 
@@ -114,7 +116,7 @@ impl Service {
         &self.terminal
     }
 
-    pub fn recv(&self, timeout: Duration) -> Received {
+    pub fn recv(&mut self, timeout: Duration) -> Received {
         let time = Instant::now();
         let mut received = Received::default();
         match self.handle.as_ref().unwrap().0.recv_timeout(timeout) {
@@ -126,13 +128,13 @@ impl Service {
         received
     }
 
-    pub fn try_recv(&self) -> Received {
+    pub fn try_recv(&mut self) -> Received {
         let mut received = Received::default();
         self.recv_all(Duration::MAX, &mut received);
         received
     }
 
-    fn recv_all(&self, timeout: Duration, received: &mut Received) {
+    fn recv_all(&mut self, timeout: Duration, received: &mut Received) {
         let time = Instant::now();
         loop {
             match self.handle.as_ref().unwrap().0.try_recv() {
@@ -146,40 +148,45 @@ impl Service {
         }
     }
 
-    fn handle_output(&self, output: Output, received: &mut Received) {
+    fn handle_output(&mut self, output: Output, received: &mut Received) {
         match output {
-            Output::Overflow(sessions) => received
-                .sessions
-                .extend(sessions.into_iter().map(|s| (s, ReturnReason::Overflow))),
-            Output::Removed(session) => received.sessions.push((session, ReturnReason::Finish)),
+            Output::Overflow(overflow) => {
+                for s in overflow {
+                    self.forbid.remove(&s.id);
+                    received.sessions.push((s, ReturnReason::Overflow))
+                }
+            }
+            Output::Removed(s) => {
+                self.forbid.remove(&s.id);
+                received.sessions.push((s, ReturnReason::Finish))
+            }
             Output::Complete {
                 output,
                 kv_pair,
                 event,
-                finished: no_decode,
+                finished,
             } => {
-                let device = self.terminal.cache_parts[0].0;
-                let mut outputs = device
+                let components = self.terminal.components.wait();
+                let outputs = self.terminal.cache_parts[0]
+                    .0
                     .retain_primary()
                     .apply(|ctx| exec::decode(output, kv_pair, event, &ctx.stream()));
-                let components = self.terminal.components.wait();
-                for (&id, toks) in &mut outputs {
-                    if toks.contains(&components.eos) {
+                for (id, mut toks) in outputs {
+                    if self.forbid.contains(&id) {
+                        continue;
+                    }
+                    if let Some((len, _)) =
+                        toks.iter().enumerate().find(|(_, t)| **t == components.eos)
+                    {
+                        toks.truncate(len);
+                        assert!(self.forbid.insert(id));
                         self.terminal.sender.send(Command::Remove(id)).unwrap()
                     }
+                    received.outputs.entry(id).or_default().extend(toks)
                 }
-                received
-                    .sessions
-                    .extend(no_decode.into_iter().map(|s| (s, ReturnReason::Finish)));
-                for (id, mut tokens) in outputs {
-                    if let Some((len, _)) = tokens
-                        .iter()
-                        .enumerate()
-                        .find(|(_, t)| **t == components.eos)
-                    {
-                        tokens.truncate(len)
-                    }
-                    received.outputs.entry(id).or_default().extend(tokens)
+                for s in finished {
+                    self.forbid.remove(&s.id);
+                    received.sessions.push((s, ReturnReason::Finish))
                 }
             }
             Output::Ready => unreachable!(),

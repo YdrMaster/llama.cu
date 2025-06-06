@@ -79,7 +79,7 @@ async fn start_infer_service(
     let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port));
     info!("start service at {addr}");
 
-    let service = Service::new(model, &gpus, use_cuda_graph);
+    let mut service = Service::new(model, &gpus, use_cuda_graph);
     let sessions: BTreeMap<SessionId, SessionInfo> = BTreeMap::new();
 
     let service_manager = Arc::new(ServiceManager {
