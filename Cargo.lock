@@ -193,9 +193,9 @@ checksum = "8c29e9fc2e21f813dfebfc1af5c08b1ebea0a69f79fc6dab7da77c9825efc757"
 
 [[package]]
 name = "bumpalo"
-version = "3.17.0"
+version = "3.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
+checksum = "793db76d6187cd04dff33004d8e6c9cc4e05cd330500379d2394209271b4aeee"
 
 [[package]]
 name = "bytes"
@@ -1256,7 +1256,6 @@ dependencies = [
  "search-cuda-tools 0.0.0 (git+https://github.com/YdrMaster/cuda-driver?rev=106f0b6)",
  "search-maca-tools",
  "serde",
- "smallvec",
  "tokeneer",
 ]
 
