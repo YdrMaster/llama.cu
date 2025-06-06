@@ -40,7 +40,7 @@ impl GenerateArgs {
 
         let mut prefill = Duration::ZERO;
         let mut decode = Duration::ZERO;
-        let mut steps = 0;
+        let mut ntoks = 0;
         let mut buf = TextBuf::new();
         loop {
             let time = Instant::now();
@@ -50,9 +50,9 @@ impl GenerateArgs {
             } else {
                 decode += time.elapsed()
             }
-            steps += 1;
 
             for (_, tokens) in outputs {
+                ntoks += tokens.len();
                 print_now!("{}", service.terminal().decode(&tokens, &mut buf))
             }
             if !sessions.is_empty() {
@@ -61,9 +61,9 @@ impl GenerateArgs {
         }
         println!();
         info!("prefill = {prefill:?}, decode = {decode:?}");
-        let time = decode / steps as _;
+        let time = decode / ntoks as _;
         info!(
-            "steps = {steps}, perf: {time:?}/tok, {}tok/s",
+            "n toks = {ntoks}, perf: {time:?}/tok, {}tok/s",
             Duration::from_secs(1).div_duration_f32(time),
         )
     }

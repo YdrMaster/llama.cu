@@ -67,14 +67,15 @@ impl OutputHead<'_> {
             sample,
         } = self;
         dims!([_, d] = x);
-        let out_idx = stream.from_host::<u8>(&out_idx);
         let out_len = out_idx.len() / size_of::<utok>();
+        let out_idx_ = stream.from_host::<u8>(&out_idx);
         let out_idx =
-            Tensor::from_dim_slice(types::U32, [out_len]).map(|_| out_idx.as_ptr().cast());
+            Tensor::from_dim_slice(types::U32, [out_len]).map(|_| out_idx_.as_ptr().cast());
         // gather
-        let mut out = Tensor::new(x.dt(), [out_len, d]).map(|len| stream.malloc::<u8>(len));
-        let out = out.as_mut().map(|mem| mem.as_ptr().cast());
+        let mut out_ = Tensor::new(x.dt(), [out_len, d]).map(|len| stream.malloc::<u8>(len));
+        let out = out_.as_mut().map(|mem| mem.as_ptr().cast());
         op::Embedding::launch(handle, None, [x, out_idx], [out.clone()], stream);
+        stream.free(out_idx_);
         // norm
         let scale = norm.as_ref().map(|mem| mem.as_ptr().cast());
         op::RmsNorm::launch(
@@ -86,8 +87,9 @@ impl OutputHead<'_> {
         );
         // linear
         dims!([nvoc, _] = linear);
-        let mut logits = Tensor::new(out.dt(), [out_len, nvoc]).map(|len| stream.malloc::<u8>(len));
-        let logits = logits.as_mut().map(|mem| mem.as_ptr().cast());
+        let mut logits_ =
+            Tensor::new(out.dt(), [out_len, nvoc]).map(|len| stream.malloc::<u8>(len));
+        let logits = logits_.as_mut().map(|mem| mem.as_ptr().cast());
         let lm_head = linear.as_ref().map(|mem| mem.as_ptr().cast());
         op::Linear::launch(
             handle,
@@ -96,6 +98,8 @@ impl OutputHead<'_> {
             [logits.clone()],
             stream,
         );
+        stream.free(out_.take());
+        // sample
         let kv_pair = stream.malloc::<KVPair>(out_len);
         for (i, config) in config.into_iter().enumerate() {
             let logits = logits.clone().transform(|layout| layout.index(0, i));
@@ -107,6 +111,7 @@ impl OutputHead<'_> {
                 sample.sample(kv_pair, logits, config, rand::random(), stream)
             }
         }
+        stream.free(logits_.take());
         kv_pair
     }
 }
