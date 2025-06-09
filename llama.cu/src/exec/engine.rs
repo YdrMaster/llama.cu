@@ -203,6 +203,7 @@ impl Worker<'_> {
             let loading = ctx.stream();
             let stream = ctx.stream();
             if outputs.send(Output::Ready).is_ok() {
+                let mut out_idx_buf = ctx.malloc_host::<utok>(1);
                 while manager.receive(&commands, &outputs).is_ok() {
                     // 组织请求
                     let Round {
@@ -229,9 +230,15 @@ impl Worker<'_> {
                         );
                         continue;
                     }
-                    let out_idx = out_idx(&reqs, output.iter().map(|(_, len)| *len), ctx);
+                    stream.synchronize(); // TODO: Remove this line
+                    out_idx(
+                        &reqs,
+                        output.iter().map(|(_, len)| *len),
+                        &mut out_idx_buf,
+                        ctx,
+                    );
                     // 加载输入
-                    let (key, tok) = models.load_toks(&tokens, &loading);
+                    let (key, tok) = models.load_toks(&tokens, &loading, &stream);
                     // 快速启动路径
                     fast_embd.launch(tok, &pre_kv_pairs, fast_map, &mut handle, &loading, &stream);
                     // 通知协处理单元
@@ -247,7 +254,8 @@ impl Worker<'_> {
                     // 推理
                     let x = models.launch(key, &reqs, &mut handle, &stream);
                     // 输出
-                    let kv_pairs = output_head.launch(x, out_idx, sample, &mut handle, &stream);
+                    let kv_pairs =
+                        output_head.launch(x, &out_idx_buf, sample, &mut handle, &stream);
                     stream.memcpy_d2d(&mut pre_kv_pairs[..kv_pairs.len()], &kv_pairs);
                     let output = Output::Complete {
                         output: output.into(),
@@ -318,21 +326,23 @@ impl Worker<'_> {
 fn out_idx<'ctx, T>(
     reqs: &[Req<T>],
     outs: impl IntoIterator<Item = usize>,
+    buf: &mut HostMem<'ctx>,
     ctx: &'ctx CurrentCtx,
-) -> HostMem<'ctx> {
+) {
     let mut out_idx = Vec::<utok>::new();
 
     let mut itok = 0;
     for (req, out) in zip(reqs, outs) {
         for i in req.seq - out..req.seq {
-            out_idx.push((itok + i) as _);
+            out_idx.push((itok + i) as _)
         }
         itok += req.seq
     }
 
-    let mut ans = ctx.malloc_host::<utok>(out_idx.len());
     let ptr = out_idx.as_ptr().cast();
     let len = size_of_val(out_idx.as_slice());
-    ans.copy_from_slice(unsafe { std::slice::from_raw_parts(ptr, len) });
-    ans
+    if buf.len() != len {
+        *buf = ctx.malloc_host::<utok>(out_idx.len())
+    }
+    buf.copy_from_slice(unsafe { std::slice::from_raw_parts(ptr, len) })
 }

@@ -86,11 +86,16 @@ impl<'ctx> ModelGroup<'ctx> {
         }
     }
 
-    pub fn load_toks(&mut self, toks: &[utok], loading: &Stream) -> (NonZeroUsize, &mut [DevByte]) {
+    pub fn load_toks(
+        &mut self,
+        toks: &[utok],
+        loading: &Stream,
+        stream: &Stream,
+    ) -> (NonZeroUsize, &mut [DevByte]) {
         let len = NonZeroUsize::new(toks.len()).unwrap();
         let (ans, _) = self.models.range(len..).next().unwrap();
         let key = NonZeroUsize::new(ans.get()).unwrap();
-        self.map_exec(key);
+        self.map_exec(key, stream);
         let tok = self
             .models
             .get_mut(&key)
@@ -101,7 +106,7 @@ impl<'ctx> ModelGroup<'ctx> {
 
     #[cfg(nccl)]
     pub fn share_toks(&mut self, key: NonZeroUsize, handle: &mut Handle, stream: &Stream<'ctx>) {
-        self.map_exec(key);
+        self.map_exec(key, stream);
         if let Some(comm) = &handle.comm {
             let toks = self.models.get_mut(&key).unwrap().toks_buf();
             comm.broadcast(toks, None, 0, stream)
@@ -148,7 +153,7 @@ impl<'ctx> ModelGroup<'ctx> {
     }
 
     /// 为组中的指定执行模型映射物理页
-    fn map_exec(&mut self, key: NonZero<usize>) {
+    fn map_exec(&mut self, key: NonZero<usize>, stream: &Stream) {
         let Self {
             models,
             mapped,
@@ -161,6 +166,7 @@ impl<'ctx> ModelGroup<'ctx> {
                 return;
             }
             // 当前映射的模型不是要映射的模型，解映射
+            stream.synchronize();
             models.get_mut(mapped).unwrap().unmap(pages)
         }
         // 建立映射
