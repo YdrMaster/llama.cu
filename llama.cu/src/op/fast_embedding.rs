@@ -28,7 +28,6 @@ impl FastEmbedding<'_> {
         kv_pairs: &[DevByte],
         map: impl IntoIterator<Item = (usize, usize)>,
         handle: &mut Handle,
-        loading: &Stream,
         stream: &Stream,
     ) {
         let map_host = map
@@ -41,9 +40,7 @@ impl FastEmbedding<'_> {
         // 拷贝参数
         let len = size_of_val(map_host.as_slice());
         unsafe { copy_nonoverlapping(map_host.as_ptr().cast(), self.host.as_mut_ptr(), len) };
-        let event = loading
-            .memcpy_h2d(&mut self.dev[..len], &self.host[..len])
-            .record();
+        stream.memcpy_h2d(&mut self.dev[..len], &self.host[..len]);
         // 编译内核
         let key = [ModuleKey::Text("fast-embedding")].into_iter();
         let module = handle.compile(key.collect(), || code(types::F16, types::U32));
@@ -51,7 +48,7 @@ impl FastEmbedding<'_> {
         // 准备参数
         let params = params![tokens.as_mut_ptr(), kv_pairs.as_ptr(), self.dev.as_ptr()];
         // 启动内核
-        stream.wait_for(&event).launch(
+        stream.launch(
             &kernel,
             ((), map_host.len() as c_uint, 0),
             &params.to_ptrs(),

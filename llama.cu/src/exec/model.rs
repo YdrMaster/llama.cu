@@ -9,17 +9,11 @@ use log::trace;
 use nn::{NNGraph, Tensor};
 use operators::{
     attention_kv_cached::cuda::Operator as Attn,
-    cuda::{DevByte, HostMem, Stream, VirByte, VirMem},
+    cuda::{DevByte, Stream, VirByte, VirMem},
 };
 use std::time::Instant;
-use tokeneer::utok;
-
-#[allow(non_camel_case_types)]
-type upos = u32;
 
 pub(super) struct ModelExec<'ctx> {
-    buf_tok: HostMem<'ctx>,
-    buf_pos: HostMem<'ctx>,
     execs: Box<[Step<'ctx>]>,
     workspace: VirMem,
     inputs: Box<[Tensor<*const VirByte, 2>]>,
@@ -76,8 +70,6 @@ impl<'ctx> ModelExec<'ctx> {
         pages.unmap(&mut workspace, ..);
 
         Self {
-            buf_tok: handle.ctx.malloc_host::<utok>(n_tok),
-            buf_pos: handle.ctx.malloc_host::<upos>(n_tok),
             execs,
             workspace,
             inputs,
@@ -97,33 +89,12 @@ impl ModelExec<'_> {
         pages.unmap(&mut self.workspace, ..)
     }
 
-    pub fn load_toks_host(&mut self, toks: &[utok], loading: &Stream) -> &mut [DevByte] {
-        let ([], buf, []) = (unsafe { self.buf_tok.align_to_mut::<utok>() }) else {
-            unreachable!()
-        };
-        buf[..toks.len()].copy_from_slice(toks);
-        buf[toks.len()..].fill(0);
-
-        let ans = as_mapped(&self.inputs[0]);
-        loading.memcpy_h2d(ans, buf);
-        ans
-    }
-
-    #[cfg(nccl)]
-    pub fn toks_buf(&mut self) -> &mut [DevByte] {
+    pub fn tok_buf(&mut self) -> &mut [DevByte] {
         as_mapped(&self.inputs[0])
     }
 
-    pub fn load_pos<T>(&mut self, reqs: &[Req<T>], loading: &Stream) {
-        let ([], pos, []) = (unsafe { self.buf_pos.align_to_mut::<upos>() }) else {
-            unreachable!()
-        };
-        reqs.iter()
-            .flat_map(|req| req.pos..req.pos + req.seq)
-            .chain(std::iter::repeat(0))
-            .zip(&mut *pos)
-            .for_each(|(val, pos)| *pos = val as _);
-        loading.memcpy_h2d(as_mapped(&self.inputs[1]), pos);
+    pub fn pos_buf(&mut self) -> &mut [DevByte] {
+        as_mapped(&self.inputs[1])
     }
 
     pub fn launch(

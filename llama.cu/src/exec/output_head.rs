@@ -8,7 +8,7 @@
     utils::dims,
 };
 use nn::{Arg, Linear, NormType, Normalization, Tensor, digit_layout::types};
-use operators::cuda::{CurrentCtx, DevMem, HostMem, Stream, VirByte};
+use operators::cuda::{CurrentCtx, DevMem, Stream, VirByte};
 use tokeneer::utok;
 
 pub(super) struct OutputHead<'ctx> {
@@ -55,7 +55,7 @@ impl OutputHead<'_> {
     pub fn launch<'ctx>(
         &mut self,
         x: Tensor<*const VirByte, 2>,
-        out_idx: &HostMem,
+        out_idx: &[utok],
         config: impl IntoIterator<Item = SampleArgs>,
         handle: &mut Handle,
         stream: &Stream<'ctx>,
@@ -67,8 +67,8 @@ impl OutputHead<'_> {
             sample,
         } = self;
         dims!([_, d] = x);
-        let out_len = out_idx.len() / size_of::<utok>();
-        let out_idx_ = stream.from_host::<u8>(out_idx);
+        let out_len = out_idx.len();
+        let out_idx_ = stream.from_host(out_idx);
         let out_idx =
             Tensor::from_dim_slice(types::U32, [out_len]).map(|_| out_idx_.as_ptr().cast());
         // gather

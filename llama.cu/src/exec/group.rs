@@ -1,5 +1,5 @@
 ﻿use super::{KVCache, model::ModelExec};
-use crate::{handle::Handle, memory::MemPages};
+use crate::{exec::upos, handle::Handle, memory::MemPages};
 use log::debug;
 use nn::{
     Distribution, Graph, GraphBuilder, LLaMA, NNGraph, Tensor, TensorMeta, digit_layout::types, op,
@@ -86,29 +86,31 @@ impl<'ctx> ModelGroup<'ctx> {
         }
     }
 
-    pub fn load_toks(
+    pub fn load_inputs(
         &mut self,
-        toks: &[utok],
-        loading: &Stream,
+        len: usize,
+        tok: &[utok],
+        pos: &[upos],
         stream: &Stream,
     ) -> (NonZeroUsize, &mut [DevByte]) {
-        let len = NonZeroUsize::new(toks.len()).unwrap();
-        let (ans, _) = self.models.range(len..).next().unwrap();
-        let key = NonZeroUsize::new(ans.get()).unwrap();
-        self.map_exec(key, stream);
-        let tok = self
+        let (&key, _) = self
             .models
-            .get_mut(&key)
-            .unwrap()
-            .load_toks_host(toks, loading);
-        (key, tok)
+            .range(NonZeroUsize::new(len).unwrap()..)
+            .next()
+            .unwrap();
+        self.map_exec(key, stream);
+
+        let model = self.models.get_mut(&key).unwrap();
+        stream.memcpy_h2d(model.tok_buf(), &tok[..key.get()]);
+        stream.memcpy_h2d(model.pos_buf(), &pos[..key.get()]);
+        (key, model.tok_buf())
     }
 
     #[cfg(nccl)]
     pub fn share_toks(&mut self, key: NonZeroUsize, handle: &mut Handle, stream: &Stream<'ctx>) {
         self.map_exec(key, stream);
         if let Some(comm) = &handle.comm {
-            let toks = self.models.get_mut(&key).unwrap().toks_buf();
+            let toks = self.models.get_mut(&key).unwrap().tok_buf();
             comm.broadcast(toks, None, 0, stream)
         }
     }
@@ -147,9 +149,10 @@ impl<'ctx> ModelGroup<'ctx> {
             })
             .collect::<Vec<_>>();
 
-        let model = models.get_mut(&key).unwrap();
-        model.load_pos(&reqs, stream);
-        model.launch(attn, handle, &reqs, stream)
+        models
+            .get_mut(&key)
+            .unwrap()
+            .launch(attn, handle, &reqs, stream)
     }
 
     /// 为组中的指定执行模型映射物理页

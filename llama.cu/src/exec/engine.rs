@@ -6,6 +6,7 @@
     output_head::OutputHead,
 };
 use crate::{
+    exec::upos,
     handle::Handle,
     op::{FastEmbedding, random_sample::KVPair},
 };
@@ -13,12 +14,14 @@ use nn::{Distribution, LLaMA, Tensor};
 use operators::{
     Operator,
     attention_kv_cached::cuda::Operator as Attn,
-    cuda::{ContextResource, CurrentCtx, Device, Gpu, HostMem},
+    cuda::{ContextResource, CurrentCtx, Device, Event, Gpu, HostMem},
 };
 use std::{
     ffi::c_int,
     iter::zip,
+    marker::PhantomData,
     num::NonZeroUsize,
+    ops::Deref,
     sync::{
         Arc, Barrier, Mutex, RwLock,
         mpsc::{Receiver, Sender},
@@ -183,6 +186,7 @@ impl Worker<'_> {
         let gpu = Gpu::new(dev.retain_primary(), Default::default());
         let attn = Attn::new(&gpu);
         gpu.apply(|ctx| {
+            let mut manager = EngineManager::default();
             let mut handle = handle(ctx);
             let mut models = ModelGroup::new(
                 llama,
@@ -196,14 +200,19 @@ impl Worker<'_> {
 
             let mut output_head = OutputHead::new(output_head, ctx);
 
-            let mut manager = EngineManager::default();
             let max_tok = *ntoks.last().unwrap();
             let mut fast_embd = FastEmbedding::new(max_tok, ctx);
             let mut pre_kv_pairs = ctx.malloc::<KVPair>(max_tok);
-            let loading = ctx.stream();
-            let stream = ctx.stream();
+
             if outputs.send(Output::Ready).is_ok() {
-                let mut out_idx_buf = ctx.malloc_host::<utok>(1);
+                let stream = ctx.stream();
+                let len = *self.ntoks.last().unwrap();
+                const BUF_LEVEL: usize = 3;
+                let mut events: [Event; BUF_LEVEL] = std::array::from_fn(|_| stream.record());
+                let mut tok_buf = BufN::<utok>::new(len, BUF_LEVEL, ctx);
+                let mut pos_buf = BufN::<upos>::new(len, BUF_LEVEL, ctx);
+                let mut out_idx_buf = BufN::<utok>::new(len, BUF_LEVEL, ctx);
+
                 while manager.receive(&commands, &outputs).is_ok() {
                     // 组织请求
                     let Round {
@@ -230,17 +239,20 @@ impl Worker<'_> {
                         );
                         continue;
                     }
-                    stream.synchronize(); // TODO: Remove this line
-                    out_idx(
-                        &reqs,
-                        output.iter().map(|(_, len)| *len),
-                        &mut out_idx_buf,
-                        ctx,
-                    );
+                    events[out_idx_buf.index()].synchronize();
+                    tok_buf.save(&tokens);
+                    pos_buf.save(&pos(&reqs));
+                    out_idx_buf.save(&out_idx(&reqs, output.iter().map(|(_, len)| *len)));
+                    events[out_idx_buf.index()] = stream.record();
                     // 加载输入
-                    let (key, tok) = models.load_toks(&tokens, &loading, &stream);
+                    let (key, tok) = models.load_inputs(
+                        tokens.len(),
+                        tok_buf.as_slice(),
+                        pos_buf.as_slice(),
+                        &stream,
+                    );
                     // 快速启动路径
-                    fast_embd.launch(tok, &pre_kv_pairs, fast_map, &mut handle, &loading, &stream);
+                    fast_embd.launch(tok, &pre_kv_pairs, fast_map, &mut handle, &stream);
                     // 通知协处理单元
                     #[cfg(nccl)]
                     if let Some(barrier) = &barrier {
@@ -254,8 +266,13 @@ impl Worker<'_> {
                     // 推理
                     let x = models.launch(key, &reqs, &mut handle, &stream);
                     // 输出
-                    let kv_pairs =
-                        output_head.launch(x, &out_idx_buf, sample, &mut handle, &stream);
+                    let kv_pairs = output_head.launch(
+                        x,
+                        &out_idx_buf.as_slice()[..1],
+                        sample,
+                        &mut handle,
+                        &stream,
+                    );
                     stream.memcpy_d2d(&mut pre_kv_pairs[..kv_pairs.len()], &kv_pairs);
                     let output = Output::Complete {
                         output: output.into(),
@@ -323,13 +340,15 @@ impl Worker<'_> {
     }
 }
 
-fn out_idx<'ctx, T>(
-    reqs: &[Req<T>],
-    outs: impl IntoIterator<Item = usize>,
-    buf: &mut HostMem<'ctx>,
-    ctx: &'ctx CurrentCtx,
-) {
-    let mut out_idx = Vec::<utok>::new();
+fn pos<T>(reqs: &[Req<T>]) -> Vec<upos> {
+    reqs.iter()
+        .flat_map(|req| req.pos..req.pos + req.seq)
+        .map(|x| x as _)
+        .collect()
+}
+
+fn out_idx<T>(reqs: &[Req<T>], outs: impl IntoIterator<Item = usize>) -> Vec<utok> {
+    let mut out_idx = Vec::new();
 
     let mut itok = 0;
     for (req, out) in zip(reqs, outs) {
@@ -339,10 +358,63 @@ fn out_idx<'ctx, T>(
         itok += req.seq
     }
 
-    let ptr = out_idx.as_ptr().cast();
-    let len = size_of_val(out_idx.as_slice());
-    if buf.len() != len {
-        *buf = ctx.malloc_host::<utok>(out_idx.len())
+    out_idx
+}
+
+struct BufN<'ctx, T> {
+    buf: HostMem<'ctx>,
+    index: usize,
+    level: usize,
+    _phantom: PhantomData<T>,
+}
+
+impl<'ctx, T: Copy> BufN<'ctx, T> {
+    fn new(len: usize, level: usize, ctx: &'ctx CurrentCtx) -> Self {
+        Self {
+            buf: ctx.malloc_host::<T>(len * level),
+            index: 0,
+            level,
+            _phantom: PhantomData,
+        }
     }
-    buf.copy_from_slice(unsafe { std::slice::from_raw_parts(ptr, len) })
+}
+
+impl<T: Copy> BufN<'_, T> {
+    fn save(&mut self, data: &[T]) {
+        let data = unsafe { std::slice::from_raw_parts(data.as_ptr().cast(), size_of_val(data)) };
+
+        if self.index + 1 == self.level {
+            self.index = 0
+        } else {
+            self.index += 1
+        }
+
+        let piece = self.buf.len() / self.level;
+        let piece = &mut self.buf[self.index * piece..][..piece];
+        piece[..data.len()].copy_from_slice(data);
+        piece[data.len()..].fill(0)
+    }
+
+    const fn index(&self) -> usize {
+        self.index
+    }
+
+    fn as_slice(&self) -> &[T] {
+        let piece = self.buf.len() / self.level;
+        let (&[], piece, &[]) =
+            (unsafe { self.buf[self.index * piece..][..piece].align_to::<T>() })
+        else {
+            unreachable!()
+        };
+        piece
+    }
+}
+
+impl<T> Deref for BufN<'_, T> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        let piece = self.buf.len() / self.level;
+        &self.buf[self.index * piece..][..piece]
+    }
 }
