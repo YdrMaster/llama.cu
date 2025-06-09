@@ -242,7 +242,9 @@ impl Worker<'_> {
                     events[out_idx_buf.index()].synchronize();
                     tok_buf.save(&tokens);
                     pos_buf.save(&pos(&reqs));
-                    out_idx_buf.save(&out_idx(&reqs, output.iter().map(|(_, len)| *len)));
+                    let out_idx = out_idx(&reqs, output.iter().map(|(_, len)| *len));
+
+                    out_idx_buf.save(&out_idx);
                     events[out_idx_buf.index()] = stream.record();
                     // 加载输入
                     let (key, tok) = models.load_inputs(
@@ -261,14 +263,14 @@ impl Worker<'_> {
                             reqs: reqs.clone(),
                         });
                         barrier.wait();
-                        models.share_toks(key, &mut handle, &stream);
+                        models.share_inputs(key, &mut handle, &stream);
                     }
                     // 推理
                     let x = models.launch(key, &reqs, &mut handle, &stream);
                     // 输出
                     let kv_pairs = output_head.launch(
                         x,
-                        &out_idx_buf.as_slice()[..1],
+                        &out_idx_buf.as_slice()[..out_idx.len()],
                         sample,
                         &mut handle,
                         &stream,
@@ -330,7 +332,7 @@ impl Worker<'_> {
                 barrier.wait();
                 match &*task_box.read().unwrap() {
                     Some(Task { key, reqs }) => {
-                        models.share_toks(*key, &mut handle, &stream);
+                        models.share_inputs(*key, &mut handle, &stream);
                         models.launch(*key, reqs, &mut handle, &stream);
                     }
                     None => break,

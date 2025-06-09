@@ -107,11 +107,14 @@ impl<'ctx> ModelGroup<'ctx> {
     }
 
     #[cfg(nccl)]
-    pub fn share_toks(&mut self, key: NonZeroUsize, handle: &mut Handle, stream: &Stream<'ctx>) {
+    pub fn share_inputs(&mut self, key: NonZeroUsize, handle: &mut Handle, stream: &Stream<'ctx>) {
         self.map_exec(key, stream);
         if let Some(comm) = &handle.comm {
-            let toks = self.models.get_mut(&key).unwrap().tok_buf();
-            comm.broadcast(toks, None, 0, stream)
+            let model = self.models.get_mut(&key).unwrap();
+            let toks = model.tok_buf();
+            comm.broadcast(toks, None, 0, stream);
+            let pos = model.pos_buf();
+            comm.broadcast(pos, None, 0, stream);
         }
     }
 
