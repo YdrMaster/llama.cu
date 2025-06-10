@@ -44,7 +44,7 @@ impl GenerateArgs {
         let mut buf = TextBuf::new();
         loop {
             let time = Instant::now();
-            let Received { sessions, outputs } = service.recv(Duration::MAX);
+            let Received { sessions, outputs } = service.recv(Duration::from_millis(50));
             if prefill.is_zero() {
                 prefill = time.elapsed()
             } else {

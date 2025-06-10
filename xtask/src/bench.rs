@@ -51,7 +51,7 @@ impl BenchArgs {
         let mut steps = 0;
         loop {
             let time = Instant::now();
-            let Received { sessions, outputs } = service.recv(Duration::from_millis(50));
+            let Received { sessions, outputs } = service.recv(Duration::MAX);
             let time = time.elapsed();
             println!("{steps:03}. time = {time:?}");
             steps += 1;
@@ -75,7 +75,7 @@ impl BenchArgs {
         );
         let time = decode / (steps - 1) as _;
         info!(
-            "QOS: steps = {steps}, perf: {time:?}/step, {}tok/s",
+            "QOS: steps = {steps}, perf: {time:?}/step, {}step/s",
             Duration::from_secs(1).div_duration_f32(time),
         )
     }
