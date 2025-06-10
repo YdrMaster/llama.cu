@@ -204,15 +204,16 @@ impl Worker<'_> {
             let mut fast_embd = FastEmbedding::new(max_tok, ctx);
             let mut pre_kv_pairs = ctx.malloc::<KVPair>(max_tok);
 
-            if outputs.send(Output::Ready).is_ok() {
-                let stream = ctx.stream();
-                let len = *self.ntoks.last().unwrap();
-                const BUF_LEVEL: usize = 3;
-                let mut events: [Event; BUF_LEVEL] = std::array::from_fn(|_| stream.record());
-                let mut tok_buf = BufN::<utok>::new(len, BUF_LEVEL, ctx);
-                let mut pos_buf = BufN::<upos>::new(len, BUF_LEVEL, ctx);
-                let mut out_idx_buf = BufN::<utok>::new(len, BUF_LEVEL, ctx);
+            let stream = ctx.stream();
+            let len = *self.ntoks.last().unwrap();
+            const BUF_LEVEL: usize = 3;
+            let mut events: [Event; BUF_LEVEL] = std::array::from_fn(|_| stream.record());
+            let mut tok_buf = BufN::<utok>::new(len, BUF_LEVEL, ctx);
+            let mut pos_buf = BufN::<upos>::new(len, BUF_LEVEL, ctx);
+            let mut out_idx_buf = BufN::<utok>::new(len, BUF_LEVEL, ctx);
+            let mut fast_embd_buf = BufN::<(utok, utok)>::new(len, BUF_LEVEL, ctx);
 
+            if outputs.send(Output::Ready).is_ok() {
                 while manager.receive(&commands, &outputs).is_ok() {
                     // 组织请求
                     let Round {
@@ -239,12 +240,12 @@ impl Worker<'_> {
                         );
                         continue;
                     }
+                    let out_idx = out_idx(&reqs, output.iter().map(|(_, len)| *len));
                     events[out_idx_buf.index()].synchronize();
                     tok_buf.save(&tokens);
                     pos_buf.save(&pos(&reqs));
-                    let out_idx = out_idx(&reqs, output.iter().map(|(_, len)| *len));
-
                     out_idx_buf.save(&out_idx);
+                    fast_embd_buf.save(&fast_map);
                     events[out_idx_buf.index()] = stream.record();
                     // 加载输入
                     let (key, tok) = models.load_inputs(
@@ -254,7 +255,13 @@ impl Worker<'_> {
                         &stream,
                     );
                     // 快速启动路径
-                    fast_embd.launch(tok, &pre_kv_pairs, fast_map, &mut handle, &stream);
+                    fast_embd.launch(
+                        tok,
+                        &pre_kv_pairs,
+                        &fast_map.as_slice()[..fast_map.len()],
+                        &mut handle,
+                        &stream,
+                    );
                     // 通知协处理单元
                     #[cfg(nccl)]
                     if let Some(barrier) = &barrier {

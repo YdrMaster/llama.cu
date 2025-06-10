@@ -1,22 +1,17 @@
 use super::{Handle, ModuleKey, cuda_type};
 use nn::digit_layout::{DigitLayout, types};
-use operators::{
-    cuda::{CurrentCtx, DevByte, DevMem, HostMem, Stream, params},
-    random_sample::KVPair,
-};
-use std::{ffi::c_uint, ptr::copy_nonoverlapping};
+use operators::cuda::{CurrentCtx, DevByte, DevMem, Stream, params};
+use std::ffi::c_uint;
 use tokeneer::utok;
 
 pub struct FastEmbedding<'ctx> {
-    host: HostMem<'ctx>,
     dev: DevMem<'ctx>,
 }
 
 impl<'ctx> FastEmbedding<'ctx> {
     pub fn new(max_tok: usize, ctx: &'ctx CurrentCtx) -> Self {
         Self {
-            host: ctx.malloc_host::<KVPair<utok>>(max_tok),
-            dev: ctx.malloc::<KVPair<utok>>(max_tok),
+            dev: ctx.malloc::<(utok, utok)>(max_tok),
         }
     }
 }
@@ -26,21 +21,15 @@ impl FastEmbedding<'_> {
         &mut self,
         tokens: &mut [DevByte],
         kv_pairs: &[DevByte],
-        map: impl IntoIterator<Item = (usize, usize)>,
+        map_host: &[(utok, utok)],
         handle: &mut Handle,
         stream: &Stream,
     ) {
-        let map_host = map
-            .into_iter()
-            .map(|(k, v)| KVPair::new(k as _, v as utok))
-            .collect::<Vec<_>>();
         if map_host.is_empty() {
             return;
         }
         // 拷贝参数
-        let len = size_of_val(map_host.as_slice());
-        unsafe { copy_nonoverlapping(map_host.as_ptr().cast(), self.host.as_mut_ptr(), len) };
-        stream.memcpy_h2d(&mut self.dev[..len], &self.host[..len]);
+        stream.memcpy_h2d(&mut self.dev[..size_of_val(map_host)], map_host);
         // 编译内核
         let key = [ModuleKey::Text("fast-embedding")].into_iter();
         let module = handle.compile(key.collect(), || code(types::F16, types::U32));

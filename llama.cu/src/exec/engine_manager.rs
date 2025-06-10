@@ -25,7 +25,7 @@ pub struct Round {
     pub reqs: Vec<Req<Arc<[Mutex<KVCache>]>>>,
     pub sample: Vec<SampleArgs>,
     pub output: Vec<(SessionId, usize)>,
-    pub fast_map: Vec<(usize, usize)>,
+    pub fast_map: Vec<(utok, utok)>,
     pub finished: Vec<Session>,
 }
 
@@ -111,7 +111,8 @@ impl EngineManager {
                 // decode
                 assert_eq!(seq, 1);
                 // fast embd
-                ans.fast_map.push((pre_output[&id], ans.tokens.len()));
+                ans.fast_map
+                    .push((pre_output[&id] as _, ans.tokens.len() as _));
                 ans.tokens.push(0)
             }
             stub.state.remain_steps -= 1;

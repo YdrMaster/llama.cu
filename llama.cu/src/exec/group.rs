@@ -111,10 +111,8 @@ impl<'ctx> ModelGroup<'ctx> {
         self.map_exec(key, stream);
         if let Some(comm) = &handle.comm {
             let model = self.models.get_mut(&key).unwrap();
-            let toks = model.tok_buf();
-            comm.broadcast(toks, None, 0, stream);
-            let pos = model.pos_buf();
-            comm.broadcast(pos, None, 0, stream);
+            comm.broadcast(model.tok_buf(), None, 0, stream);
+            comm.broadcast(model.pos_buf(), None, 0, stream);
         }
     }
 
